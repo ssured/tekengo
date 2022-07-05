@@ -1,3 +1,4 @@
+import commonjs from "@rollup/plugin-commonjs";
 import resolve from "@rollup/plugin-node-resolve";
 import sucrase from "@rollup/plugin-sucrase";
 import livereload from "rollup-plugin-livereload";
@@ -20,6 +21,7 @@ export default [
         delay: 0,
         // inject: false,
       }),
+      commonjs(),
       serve({
         // https://github.com/thgh/rollup-plugin-serve
         open: true,
