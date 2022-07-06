@@ -1,6 +1,12 @@
 import "../styling";
+
+import { html, render } from "lit-html";
+
 import { hash } from "../utils/hash";
 
+const name = "world";
+const sayHi = html`<h1>Hello ${name}</h1>`;
+render(sayHi, document.getElementById("approot")!);
 class TestCore {
   constructor() {
     return new Proxy(this, {

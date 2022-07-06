@@ -28,6 +28,7 @@
     "rollup-plugin-serve": "^2.0.0"
   },
   "dependencies": {
+    "lit-html": "^2.2.6",
     "nano-css": "^5.3.5",
     "rollup-plugin-livereload": "^2.0.5"
   }
