@@ -565,31 +565,83 @@ class HashIsArrayError extends Error {}
 const name = "world";
 const sayHi = $`<h1>Hello ${name}</h1>`;
 x(sayHi, document.getElementById("approot"));
-class TestCore {
-  constructor() {
-    return new Proxy(this, {
-      get(target, p) {
-        console.log("get", target, p);
-        return Reflect.get(target, p);
-      },
-      set(target, p, v) {
-        console.log("set", target, p, v);
-        console.log(hash(target ));
-        console.log(JSON.stringify(target));
-        const result = Reflect.set(target, p, v);
-        console.log(hash(target ));
-        console.log(JSON.stringify(target));
-        return result;
-      },
-    });
+
+ class TestCore {
+   static __initStatic() {this.getCache = (() => {
+    const caches = new WeakMap();
+    return (cls) => {
+      if (!caches.has(cls)) caches.set(cls, new WeakMap());
+      return caches.get(cls);
+    };
+  })();}
+
+   __init() {this.handlers = new Set();}
+  $(handler) {
+    this.handlers.add(handler);
+    return this;
+    // return () => {
+    //   this.handlers.delete(handler);
+    // };
+  }
+
+   mutate(values) {
+    if (this.handlers.size === 0)
+      console.error("no handlers, maybe this object already updated");
+
+    const next = new (this.constructor )({
+      ...this.s,
+      "": this.id,
+      ...values,
+    }) ;
+    for (const handler of this.handlers) {
+      if (handler(next)) next.$(handler);
+    }
+    this.handlers.clear();
   }
 
   
+  
+
+  constructor(source) {TestCore.prototype.__init.call(this);
+    const [id, s] = hash(source);
+    // const s = source;
+
+    {
+      // check if an object already exists, if so, return that one
+      const cache = TestCore.getCache(this.constructor);
+      // @ts-ignore
+      if (cache.has(s)) return cache.get(s);
+      cache.set(s, this);
+    }
+
+    this.id = id;
+    this.s = s;
+  }
+
+  
+} TestCore.__initStatic();
+
+class Line extends TestCore {constructor(...args) { super(...args); Line.prototype.__init2.call(this); }
+  
+
+  append(p) {
+    this.mutate({ [Date.now().toString(36)]: p });
+    console.log(this.s);
+  }
+
+   __init2() {this.coords = Object.values(this.s);}
 }
 
-const test = new TestCore();
-console.log({ test });
+let line = new Line({}).$((next) => (line = next));
 
-console.log(test.a);
-test.a = 42;
-console.log(test.a);
+// console.log({ test });
+
+// console.log(test.a);
+// test.a = 42;
+// console.log(test.a);
+
+document.body.addEventListener("mousemove", (e) => {
+  line.append({ x: e.clientX, y: e.clientY });
+  console.log(line.id, JSON.stringify(line.coords));
+  // console.log(JSON.stringify(line));
+});
