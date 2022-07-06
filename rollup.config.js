@@ -19,7 +19,7 @@ export default [
       }),
       livereload({
         delay: 0,
-        // inject: false,
+        inject: false,
       }),
       commonjs(),
       serve({
