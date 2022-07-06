@@ -1,22 +1,31 @@
-import { create } from "nano-css";
+import "../styling";
+import { hash } from "../utils/hash";
 
-const nano = create();
+class TestCore {
+  constructor() {
+    return new Proxy(this, {
+      get(target, p) {
+        console.log("get", target, p);
+        return Reflect.get(target, p);
+      },
+      set(target, p, v) {
+        console.log("set", target, p, v);
+        console.log(hash(target as any));
+        console.log(JSON.stringify(target));
+        const result = Reflect.set(target, p, v);
+        console.log(hash(target as any));
+        console.log(JSON.stringify(target));
+        return result;
+      },
+    });
+  }
 
-nano.put("*,*::after,*::before", {
-  boxSizing: "border-box",
-  fontSize: "inherit",
-  fontFamily: "inherit",
-  color: "inherit",
-  margin: 0,
-  padding: 0,
-  border: "0 solid",
-});
+  public declare a?: number;
+}
 
-nano.put("body", {
-  backgroundImage: "url(./logo.png)",
-  backgroundRepeat: "no-repeat",
-  backgroundPosition: "center",
-  backgroundSize: "contain",
-  height: "100vh",
-  padding: "20px",
-});
+const test = new TestCore();
+console.log({ test });
+
+console.log(test.a);
+test.a = 42;
+console.log(test.a);
