@@ -9,9 +9,13 @@
     <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
 
     <script>
-      window.process = { env: {} };
+      const isLocalHost = location.host.match("localhost");
 
-      if (location.hostname.match("localhost")) {
+      window.process = {
+        env: { NODE_ENV: isLocalHost ? "development" : "production" },
+      };
+
+      if (isLocalHost) {
         // console.log("Trigger live reload");
         (function (l, r) {
           if (!l || l.getElementById("livereloadscript")) return;

@@ -26,7 +26,7 @@ export default [
         // https://github.com/thgh/rollup-plugin-serve
         open: true,
         openPage: "/",
-        port: 8080,
+        port: 9876,
 
         // Show server address in console (default: true)
         verbose: false,

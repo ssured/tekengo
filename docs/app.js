@@ -135,7 +135,9 @@ var create = function (config) {
     return renderer;
 };
 
-const nano = create();
+const nano = create({
+  verbose: true,
+});
 
 nano.put("*,*::after,*::before", {
   boxSizing: "border-box",
@@ -311,6 +313,9 @@ function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { 
 
 
 
+
+
+
 const config
 
 
@@ -322,8 +327,11 @@ const { hash, lookup, stats } = (() => {
 
   function lookupHash(hash) {
     if (!singletonForHash.has(hash)) {
-      const result = _optionalChain([config, 'access', _ => _.load, 'optionalCall', _2 => _2(hash)]);
-      if (result === undefined) throw new HashNotFoundError();
+      let result = _optionalChain([config, 'access', _ => _.load, 'optionalCall', _2 => _2(hash)]);
+      if (result === undefined) {
+        throw new HashNotFoundError();
+        // result = await import(`/${hash}`);
+      }
       singletonForHash.set(hash, result);
     }
     return singletonForHash.get(hash);
@@ -566,7 +574,7 @@ const name = "world";
 const sayHi = $`<h1>Hello ${name}</h1>`;
 x(sayHi, document.getElementById("approot"));
 
- class TestCore {
+ class Mould {
    static __initStatic() {this.getCache = (() => {
     const caches = new WeakMap();
     return (cls) => {
@@ -575,9 +583,9 @@ x(sayHi, document.getElementById("approot"));
     };
   })();}
 
-   __init() {this.handlers = new Set();}
+  #handlers = new Set();
   $(handler) {
-    this.handlers.add(handler);
+    this.#handlers.add(handler );
     return this;
     // return () => {
     //   this.handlers.delete(handler);
@@ -585,30 +593,36 @@ x(sayHi, document.getElementById("approot"));
   }
 
    mutate(values) {
-    if (this.handlers.size === 0)
+    if (this.#handlers.size === 0)
       console.error("no handlers, maybe this object already updated");
 
     const next = new (this.constructor )({
       ...this.s,
       "": this.id,
-      ...values,
+      ...Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [
+          k,
+          v instanceof Mould ? v.s : v,
+        ])
+      ),
     }) ;
-    for (const handler of this.handlers) {
+    for (const handler of this.#handlers) {
       if (handler(next)) next.$(handler);
     }
-    this.handlers.clear();
+    this.#handlers.clear();
+    return next;
   }
 
   
   
 
-  constructor(source) {TestCore.prototype.__init.call(this);
+  constructor(source) {
     const [id, s] = hash(source);
     // const s = source;
 
     {
       // check if an object already exists, if so, return that one
-      const cache = TestCore.getCache(this.constructor);
+      const cache = Mould.getCache(this.constructor);
       // @ts-ignore
       if (cache.has(s)) return cache.get(s);
       cache.set(s, this);
@@ -617,19 +631,39 @@ x(sayHi, document.getElementById("approot"));
     this.id = id;
     this.s = s;
   }
+} Mould.__initStatic();
 
-  
-} TestCore.__initStatic();
+// type coord2d = { x: number; y: number };
+// type lineShape = { [key in string]: coord2d };
 
-class Line extends TestCore {constructor(...args) { super(...args); Line.prototype.__init2.call(this); }
-  
+class Point extends Mould {
+  // declare $: (handler: (value: Point) => any) => this;
+
+  get x() {
+    return this.s.x;
+  }
+  get y() {
+    return this.s.y;
+  }
+}
+
+
+
+
+
+// type $<O extends Mould<any>> = (handler: (value: O) => any) => O;
+
+class Line extends Mould {constructor(...args) { super(...args); Line.prototype.__init.call(this); }
+  // declare $: $<this>;
 
   append(p) {
-    this.mutate({ [Date.now().toString(36)]: p });
-    console.log(this.s);
+    return this.mutate({ [Date.now().toString(36)]: p }) ;
+    // console.log(this.s);
   }
 
-   __init2() {this.coords = Object.values(this.s);}
+   __init() {this.coords = Object.entries(this.s)
+    .filter(([k]) => k !== "")
+    .map(([, coord]) => new Point(coord));}
 }
 
 let line = new Line({}).$((next) => (line = next));
@@ -641,7 +675,7 @@ let line = new Line({}).$((next) => (line = next));
 // console.log(test.a);
 
 document.body.addEventListener("mousemove", (e) => {
-  line.append({ x: e.clientX, y: e.clientY });
-  console.log(line.id, JSON.stringify(line.coords));
+  console.log(line.append(new Point({ x: e.clientX, y: e.clientY })).id);
+  console.log(line.id, line.coords.length);
   // console.log(JSON.stringify(line));
 });

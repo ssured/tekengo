@@ -8,7 +8,7 @@ const name = "world";
 const sayHi = html`<h1>Hello ${name}</h1>`;
 render(sayHi, document.getElementById("approot")!);
 
-abstract class TestCore<S extends JSONObject> {
+abstract class Mould<S extends JSONObject> {
   private static getCache = (() => {
     const caches = new WeakMap<object, WeakMap<object, object>>();
     return (cls: object) => {
@@ -17,9 +17,9 @@ abstract class TestCore<S extends JSONObject> {
     };
   })();
 
-  private handlers = new Set<(value: TestCore<S>) => any>();
-  $(handler: (value: TestCore<S>) => any) {
-    this.handlers.add(handler);
+  #handlers = new Set<(value: Mould<S>) => any>();
+  $(handler: (value: this) => any): this {
+    this.#handlers.add(handler as any);
     return this;
     // return () => {
     //   this.handlers.delete(handler);
@@ -27,18 +27,24 @@ abstract class TestCore<S extends JSONObject> {
   }
 
   protected mutate(values: { [key in keyof S]: S[key] }) {
-    if (this.handlers.size === 0)
+    if (this.#handlers.size === 0)
       console.error("no handlers, maybe this object already updated");
 
     const next = new (this.constructor as any)({
       ...this.s,
       "": this.id,
-      ...values,
-    }) as TestCore<S>;
-    for (const handler of this.handlers) {
+      ...Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [
+          k,
+          v instanceof Mould ? v.s : v,
+        ])
+      ),
+    }) as Mould<S>;
+    for (const handler of this.#handlers) {
       if (handler(next)) next.$(handler);
     }
-    this.handlers.clear();
+    this.#handlers.clear();
+    return next;
   }
 
   readonly id!: string;
@@ -50,7 +56,7 @@ abstract class TestCore<S extends JSONObject> {
 
     {
       // check if an object already exists, if so, return that one
-      const cache = TestCore.getCache(this.constructor);
+      const cache = Mould.getCache(this.constructor);
       // @ts-ignore
       if (cache.has(s)) return cache.get(s)!;
       cache.set(s, this);
@@ -59,26 +65,39 @@ abstract class TestCore<S extends JSONObject> {
     this.id = id;
     this.s = s;
   }
-
-  public declare a?: number;
 }
 
-type coord2d = { x: number; y: number };
-type lineShape = { [key in string]: coord2d };
+// type coord2d = { x: number; y: number };
+// type lineShape = { [key in string]: coord2d };
 
-class Point extends TestCore<coord2d> {
-  declare $: (handler: (value: Point) => any) => this;
+class Point extends Mould<{ x: number; y: number }> {
+  // declare $: (handler: (value: Point) => any) => this;
+
+  get x() {
+    return this.s.x;
+  }
+  get y() {
+    return this.s.y;
+  }
 }
 
-class Line extends TestCore<lineShape> {
-  declare $: (handler: (value: Line) => any) => this;
+type ShapeOf<T extends Mould<any>> = T extends Mould<infer Shape>
+  ? Shape
+  : never;
 
-  append(p: coord2d) {
-    this.mutate({ [Date.now().toString(36)]: p });
-    console.log(this.s);
+// type $<O extends Mould<any>> = (handler: (value: O) => any) => O;
+
+class Line extends Mould<{ [key in string]: ShapeOf<Point> }> {
+  // declare $: $<this>;
+
+  append(p: Point) {
+    return this.mutate({ [Date.now().toString(36)]: p }) as Line;
+    // console.log(this.s);
   }
 
-  readonly coords = Object.values(this.s);
+  readonly coords = Object.entries(this.s)
+    .filter(([k]) => k !== "")
+    .map(([, coord]) => new Point(coord));
 }
 
 let line = new Line({}).$((next) => (line = next));
@@ -90,7 +109,7 @@ let line = new Line({}).$((next) => (line = next));
 // console.log(test.a);
 
 document.body.addEventListener("mousemove", (e) => {
-  line.append({ x: e.clientX, y: e.clientY });
-  console.log(line.id, JSON.stringify(line.coords));
+  console.log(line.append(new Point({ x: e.clientX, y: e.clientY })).id);
+  console.log(line.id, line.coords.length);
   // console.log(JSON.stringify(line));
 });
