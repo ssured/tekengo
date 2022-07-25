@@ -2,23 +2,54 @@ import "../styling";
 
 import { html, render } from "lit-html";
 
-import { hash, JSONObject } from "../utils/hash";
+import { hash, JSONObject, stats } from "../utils/hash";
+import { WeakValue } from "../utils/weak-value";
 
-const name = "world";
+const name = "Wieger";
 const sayHi = html`<h1>Hello ${name}</h1>`;
 render(sayHi, document.getElementById("approot")!);
 
-abstract class Mould<S extends JSONObject> {
+type Meta = {
+  size: number;
+  prev: string;
+  depth: number;
+  weight: number;
+  message?: {};
+};
+type Data = JSONObject;
+
+abstract class Mould<S extends Data> {
+  private static vault = new WeakValue<string, Mould<Data>>();
+
+  private static createMeta = (
+    s: Data,
+    message?: Meta["message"],
+    prev?: Mould<any>
+  ): Meta => {
+    const size = JSON.stringify(s).length;
+    return {
+      message,
+      size,
+      prev: prev?.id ?? "",
+      depth: (prev?.m.depth ?? 0) + 1,
+      weight: (prev?.m.weight ?? 0) + size,
+    };
+  };
+
+  protected static hash = hash;
+
   private static getCache = (() => {
-    const caches = new WeakMap<object, WeakMap<object, object>>();
-    return (cls: object) => {
+    const caches = new WeakMap<Function, WeakMap<object, object>>();
+    return (cls: Function) => {
       if (!caches.has(cls)) caches.set(cls, new WeakMap());
       return caches.get(cls)!;
     };
   })();
 
-  #handlers = new Set<(value: Mould<S>) => any>();
-  $(handler: (value: this) => any): this {
+  #handlers = new Set<(value: Mould<any>, remove: () => void) => void | false>([
+    () => {},
+  ]);
+  $(handler: (value: this, remove: () => void) => void | false): this {
     this.#handlers.add(handler as any);
     return this;
     // return () => {
@@ -26,44 +57,53 @@ abstract class Mould<S extends JSONObject> {
     // };
   }
 
-  protected mutate(values: { [key in keyof S]: S[key] }) {
-    if (this.#handlers.size === 0)
-      console.error("no handlers, maybe this object already updated");
+  protected mutate(values: Partial<S>) {
+    const nextS = Object.fromEntries(
+      Object.entries(this.s).concat(Object.entries(values))
+    ) as S;
 
-    const next = new (this.constructor as any)({
-      ...this.s,
-      "": this.id,
-      ...Object.fromEntries(
-        Object.entries(values).map(([k, v]) => [
-          k,
-          v instanceof Mould ? v.s : v,
-        ])
-      ),
-    }) as Mould<S>;
+    const Ctor = this.constructor as new (object: { m: Meta; s: S }) => this;
+
+    const nextMould: this = new Ctor({
+      m: Mould.createMeta(nextS, this),
+      s: nextS,
+    });
+
     for (const handler of this.#handlers) {
-      if (handler(next)) next.$(handler);
+      try {
+        const removeHandler = () => {
+          this.#handlers.delete(handler);
+        };
+        const result = handler(nextMould, removeHandler);
+        if (result !== false) {
+          nextMould.$(handler); // register the new handler
+          removeHandler(); // remove the old one
+        }
+      } catch (e) {
+        console.error("Error in update handler", e);
+      }
     }
-    this.#handlers.clear();
-    return next;
+
+    return nextMould;
   }
 
   readonly id!: string;
   protected readonly s!: S;
+  protected readonly m!: Meta;
 
-  constructor(source: S) {
-    const [id, s] = hash(source);
-    // const s = source;
+  constructor(s: S, m: Meta = Mould.createMeta(s)) {
+    const [id, { m: singleM, s: singleton }] = Mould.hash({ m, s });
 
-    {
-      // check if an object already exists, if so, return that one
-      const cache = Mould.getCache(this.constructor);
-      // @ts-ignore
-      if (cache.has(s)) return cache.get(s)!;
-      cache.set(s, this);
-    }
+    // check if an object already exists, if so, return that one
+    const cache = Mould.getCache(this.constructor);
+    // @ts-ignore
+    if (cache.has(singleton)) return cache.get(singleton)!;
+
+    cache.set(singleton, this);
 
     this.id = id;
-    this.s = s;
+    this.s = singleton;
+    this.m = singleM;
   }
 }
 
@@ -73,12 +113,15 @@ abstract class Mould<S extends JSONObject> {
 class Point extends Mould<{ x: number; y: number }> {
   // declare $: (handler: (value: Point) => any) => this;
 
-  get x() {
-    return this.s.x;
-  }
-  get y() {
-    return this.s.y;
-  }
+  readonly x = this.s.x;
+  readonly y = this.s.y;
+
+  // get x() {
+  //   return this.s.x;
+  // }
+  // get y() {
+  //   return this.s.y;
+  // }
 }
 
 type ShapeOf<T extends Mould<any>> = T extends Mould<infer Shape>
@@ -91,7 +134,7 @@ class Line extends Mould<{ [key in string]: ShapeOf<Point> }> {
   // declare $: $<this>;
 
   append(p: Point) {
-    return this.mutate({ [Date.now().toString(36)]: p }) as Line;
+    return this.mutate({ [Date.now().toString(36)]: p });
     // console.log(this.s);
   }
 
@@ -100,7 +143,10 @@ class Line extends Mould<{ [key in string]: ShapeOf<Point> }> {
     .map(([, coord]) => new Point(coord));
 }
 
-let line = new Line({}).$((next) => (line = next));
+let line = new Line({}).$((next) => {
+  console.log({ next });
+  line = next;
+});
 
 // console.log({ test });
 
@@ -108,8 +154,10 @@ let line = new Line({}).$((next) => (line = next));
 // test.a = 42;
 // console.log(test.a);
 
+console.log("started", Date.now());
+
 document.body.addEventListener("mousemove", (e) => {
-  console.log(line.append(new Point({ x: e.clientX, y: e.clientY })).id);
-  console.log(line.id, line.coords.length);
+  line.append(new Point({ x: e.clientX, y: e.clientY }));
+  console.log(line.id, line.coords.length, stats());
   // console.log(JSON.stringify(line));
 });

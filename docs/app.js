@@ -254,7 +254,7 @@ function sha256(b) {
   return s;
 }
 
-class WeakValue extends Map {
+function _optionalChain$2(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }class WeakValue extends Map {constructor(...args) { super(...args); WeakValue.prototype.__init.call(this); }
   // https://github.com/WebReflection/weak-value/blob/fbeb5955e99488d83d5c77f722b81bb6ca8dc006/esm/index.js
 
   // ISC License
@@ -272,12 +272,15 @@ class WeakValue extends Map {
   // LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
   // OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
   // PERFORMANCE OF THIS SOFTWARE.
+  __init() {this.onRemove = undefined;}
+
   #delete = (key) => {
     this.#registry.unregister(super.get(key) );
     return super.delete(key);
   };
   #registry = new FinalizationRegistry((key) => {
     super.delete(key);
+    _optionalChain$2([this, 'access', _ => _.onRemove, 'optionalCall', _2 => _2(key)]);
   });
   delete(key) {
     return super.has(key) && !this.#delete(key);
@@ -300,7 +303,7 @@ class WeakValue extends Map {
   }
 }
 
-function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+function _nullishCoalesce$1(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain$1(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
 
 
 
@@ -316,23 +319,40 @@ function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { 
 
 
 
-const config
+const jsonStringCache = new Map();
+
+const handlers = new Set
 
 
- = {};
+([
+  {
+    load: (hash) => {
+      const stringified = jsonStringCache.get(hash);
+      if (stringified) return JSON.parse(stringified);
+    },
+    persist: (object, hash) =>
+      jsonStringCache.set(hash, JSON.stringify(object)),
+  },
+]);
 
 const { hash, lookup, stats } = (() => {
   const hashCache = new WeakMap();
   const singletonForHash = new WeakValue();
+  singletonForHash.onRemove = (hash) => {
+    console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)));
+    jsonStringCache.delete(hash);
+  };
 
   function lookupHash(hash) {
     if (!singletonForHash.has(hash)) {
-      let result = _optionalChain([config, 'access', _ => _.load, 'optionalCall', _2 => _2(hash)]);
-      if (result === undefined) {
-        throw new HashNotFoundError();
-        // result = await import(`/${hash}`);
+      for (const { load } of handlers) {
+        try {
+          const result = _optionalChain$1([load, 'optionalCall', _ => _(hash)]);
+          if (result === undefined) continue;
+          singletonForHash.set(hash, untransformObject(result));
+        } catch (e) {}
       }
-      singletonForHash.set(hash, result);
+      throw new HashNotFoundError();
     }
     return singletonForHash.get(hash);
   }
@@ -370,7 +390,7 @@ const { hash, lookup, stats } = (() => {
           }
         )[0];
 
-        for (const handler of _nullishCoalesce(handlersForObject.get(target), () => ( [])))
+        for (const handler of _nullishCoalesce$1(handlersForObject.get(target), () => ( [])))
           handler(nextHash, p);
       } else {
         return Reflect.set(target, p, value);
@@ -426,6 +446,12 @@ const { hash, lookup, stats } = (() => {
     return createProxy(firstItem);
   }
 
+  function untransformObject(source) {
+    return Object.fromEntries(
+      Object.entries(source).map(([k, v]) => [k, untransform(v)])
+    );
+  }
+
   function createSingleton(
     source
   ) {
@@ -447,7 +473,9 @@ const { hash, lookup, stats } = (() => {
     const result = [hash, singleton ] ;
 
     if (!singletonForHash.has(hash)) {
-      _optionalChain([config, 'access', _3 => _3.persist, 'optionalCall', _4 => _4(transformed, hash)]);
+      for (const { persist } of handlers) {
+        _optionalChain$1([persist, 'optionalCall', _2 => _2(transformed, hash)]);
+      }
       singletonForHash.set(hash, singleton);
       hashCache.set(singleton, result);
     }
@@ -570,12 +598,41 @@ class HashIsArrayError extends Error {}
 //   };
 // })();
 
-const name = "world";
+function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+const name = "Wieger";
 const sayHi = $`<h1>Hello ${name}</h1>`;
 x(sayHi, document.getElementById("approot"));
 
+
+
+
+
+
+
+
+
+
  class Mould {
-   static __initStatic() {this.getCache = (() => {
+   static __initStatic() {this.vault = new WeakValue();}
+
+   static __initStatic2() {this.createMeta = (
+    s,
+    message,
+    prev
+  ) => {
+    const size = JSON.stringify(s).length;
+    return {
+      message,
+      size,
+      prev: _nullishCoalesce(_optionalChain([prev, 'optionalAccess', _6 => _6.id]), () => ( "")),
+      depth: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _7 => _7.m, 'access', _8 => _8.depth]), () => ( 0))) + 1,
+      weight: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _9 => _9.m, 'access', _10 => _10.weight]), () => ( 0))) + size,
+    };
+  };}
+
+   static __initStatic3() {this.hash = hash;}
+
+   static __initStatic4() {this.getCache = (() => {
     const caches = new WeakMap();
     return (cls) => {
       if (!caches.has(cls)) caches.set(cls, new WeakMap());
@@ -583,7 +640,9 @@ x(sayHi, document.getElementById("approot"));
     };
   })();}
 
-  #handlers = new Set();
+  #handlers = new Set([
+    () => {},
+  ]);
   $(handler) {
     this.#handlers.add(handler );
     return this;
@@ -593,58 +652,70 @@ x(sayHi, document.getElementById("approot"));
   }
 
    mutate(values) {
-    if (this.#handlers.size === 0)
-      console.error("no handlers, maybe this object already updated");
+    const nextS = Object.fromEntries(
+      Object.entries(this.s).concat(Object.entries(values))
+    ) ;
 
-    const next = new (this.constructor )({
-      ...this.s,
-      "": this.id,
-      ...Object.fromEntries(
-        Object.entries(values).map(([k, v]) => [
-          k,
-          v instanceof Mould ? v.s : v,
-        ])
-      ),
-    }) ;
+    const Ctor = this.constructor ;
+
+    const nextMould = new Ctor({
+      m: Mould.createMeta(nextS, this),
+      s: nextS,
+    });
+
     for (const handler of this.#handlers) {
-      if (handler(next)) next.$(handler);
+      try {
+        const removeHandler = () => {
+          this.#handlers.delete(handler);
+        };
+        const result = handler(nextMould, removeHandler);
+        if (result !== false) {
+          nextMould.$(handler); // register the new handler
+          removeHandler(); // remove the old one
+        }
+      } catch (e) {
+        console.error("Error in update handler", e);
+      }
     }
-    this.#handlers.clear();
-    return next;
+
+    return nextMould;
   }
 
   
   
+  
 
-  constructor(source) {
-    const [id, s] = hash(source);
-    // const s = source;
+  constructor(s, m = Mould.createMeta(s)) {
+    const [id, { m: singleM, s: singleton }] = Mould.hash({ m, s });
 
-    {
-      // check if an object already exists, if so, return that one
-      const cache = Mould.getCache(this.constructor);
-      // @ts-ignore
-      if (cache.has(s)) return cache.get(s);
-      cache.set(s, this);
-    }
+    // check if an object already exists, if so, return that one
+    const cache = Mould.getCache(this.constructor);
+    // @ts-ignore
+    if (cache.has(singleton)) return cache.get(singleton);
+
+    cache.set(singleton, this);
 
     this.id = id;
-    this.s = s;
+    this.s = singleton;
+    this.m = singleM;
   }
-} Mould.__initStatic();
+} Mould.__initStatic(); Mould.__initStatic2(); Mould.__initStatic3(); Mould.__initStatic4();
 
 // type coord2d = { x: number; y: number };
 // type lineShape = { [key in string]: coord2d };
 
-class Point extends Mould {
+class Point extends Mould {constructor(...args) { super(...args); Point.prototype.__init.call(this);Point.prototype.__init2.call(this); }
   // declare $: (handler: (value: Point) => any) => this;
 
-  get x() {
-    return this.s.x;
-  }
-  get y() {
-    return this.s.y;
-  }
+   __init() {this.x = this.s.x;}
+   __init2() {this.y = this.s.y;}
+
+  // get x() {
+  //   return this.s.x;
+  // }
+  // get y() {
+  //   return this.s.y;
+  // }
 }
 
 
@@ -653,20 +724,23 @@ class Point extends Mould {
 
 // type $<O extends Mould<any>> = (handler: (value: O) => any) => O;
 
-class Line extends Mould {constructor(...args) { super(...args); Line.prototype.__init.call(this); }
+class Line extends Mould {constructor(...args2) { super(...args2); Line.prototype.__init3.call(this); }
   // declare $: $<this>;
 
   append(p) {
-    return this.mutate({ [Date.now().toString(36)]: p }) ;
+    return this.mutate({ [Date.now().toString(36)]: p });
     // console.log(this.s);
   }
 
-   __init() {this.coords = Object.entries(this.s)
+   __init3() {this.coords = Object.entries(this.s)
     .filter(([k]) => k !== "")
     .map(([, coord]) => new Point(coord));}
 }
 
-let line = new Line({}).$((next) => (line = next));
+let line = new Line({}).$((next) => {
+  console.log({ next });
+  line = next;
+});
 
 // console.log({ test });
 
@@ -674,8 +748,10 @@ let line = new Line({}).$((next) => (line = next));
 // test.a = 42;
 // console.log(test.a);
 
+console.log("started", Date.now());
+
 document.body.addEventListener("mousemove", (e) => {
-  console.log(line.append(new Point({ x: e.clientX, y: e.clientY })).id);
-  console.log(line.id, line.coords.length);
+  line.append(new Point({ x: e.clientX, y: e.clientY }));
+  console.log(line.id, line.coords.length, stats());
   // console.log(JSON.stringify(line));
 });
