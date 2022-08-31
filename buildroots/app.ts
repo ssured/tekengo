@@ -3,7 +3,6 @@ import "../styling";
 import { html, render } from "lit-html";
 
 import { hash, JSONObject, stats } from "../utils/hash";
-import { WeakValue } from "../utils/weak-value";
 
 const name = "Wieger";
 const sayHi = html`<h1>Hello ${name}</h1>`;
@@ -14,25 +13,20 @@ type Meta = {
   prev: string;
   depth: number;
   weight: number;
-  message?: {};
 };
 type Data = JSONObject;
+type AddMeta<S extends Data> = S & { ""?: Meta };
 
 abstract class Mould<S extends Data> {
-  private static vault = new WeakValue<string, Mould<Data>>();
-
-  private static createMeta = (
-    s: Data,
-    message?: Meta["message"],
-    prev?: Mould<any>
-  ): Meta => {
-    const size = JSON.stringify(s).length;
+  private static addMeta = (s: AddMeta<Data>, prev?: Mould<Data>): Meta => {
+    const size = JSON.stringify(
+      Object.assign({}, s, { [""]: undefined })
+    ).length;
     return {
-      message,
       size,
       prev: prev?.id ?? "",
-      depth: (prev?.m.depth ?? 0) + 1,
-      weight: (prev?.m.weight ?? 0) + size,
+      depth: (prev?.s[""]?.depth ?? 0) + 1,
+      weight: (prev?.s[""]?.weight ?? 0) + size,
     };
   };
 
@@ -62,11 +56,11 @@ abstract class Mould<S extends Data> {
       Object.entries(this.s).concat(Object.entries(values))
     ) as S;
 
-    const Ctor = this.constructor as new (object: { m: Meta; s: S }) => this;
+    const Ctor = this.constructor as new (object: S) => this;
 
     const nextMould: this = new Ctor({
-      m: Mould.createMeta(nextS, this),
-      s: nextS,
+      [""]: Mould.addMeta(nextS, this),
+      ...nextS,
     });
 
     for (const handler of this.#handlers) {
@@ -88,11 +82,14 @@ abstract class Mould<S extends Data> {
   }
 
   readonly id!: string;
-  protected readonly s!: S;
-  protected readonly m!: Meta;
+  protected readonly s!: AddMeta<S>;
 
-  constructor(s: S, m: Meta = Mould.createMeta(s)) {
-    const [id, { m: singleM, s: singleton }] = Mould.hash({ m, s });
+  constructor(source: Omit<AddMeta<S>, ""> & Partial<Pick<AddMeta<S>, "">>) {
+    const [id, singleton] = Mould.hash(
+      ("" in source
+        ? source
+        : { [""]: Mould.addMeta(source), ...source }) as AddMeta<S>
+    );
 
     // check if an object already exists, if so, return that one
     const cache = Mould.getCache(this.constructor);
@@ -101,9 +98,8 @@ abstract class Mould<S extends Data> {
 
     cache.set(singleton, this);
 
-    this.id = id;
-    this.s = singleton;
-    this.m = singleM;
+    Object.defineProperty(this, "id", { enumerable: false, value: id });
+    Object.defineProperty(this, "s", { enumerable: false, value: singleton });
   }
 }
 
@@ -130,6 +126,10 @@ type ShapeOf<T extends Mould<any>> = T extends Mould<infer Shape>
 
 // type $<O extends Mould<any>> = (handler: (value: O) => any) => O;
 
+const filterMetaEntry = <K extends string, V>(
+  entry: [K, V]
+): entry is [Exclude<K, "">, Exclude<V, Meta>] => entry[0] !== "";
+
 class Line extends Mould<{ [key in string]: ShapeOf<Point> }> {
   // declare $: $<this>;
 
@@ -139,12 +139,11 @@ class Line extends Mould<{ [key in string]: ShapeOf<Point> }> {
   }
 
   readonly coords = Object.entries(this.s)
-    .filter(([k]) => k !== "")
+    .filter(filterMetaEntry)
     .map(([, coord]) => new Point(coord));
 }
 
 let line = new Line({}).$((next) => {
-  console.log({ next });
   line = next;
 });
 

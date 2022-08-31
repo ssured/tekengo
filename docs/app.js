@@ -319,37 +319,57 @@ function _nullishCoalesce$1(lhs, rhsFn) { if (lhs != null) { return lhs; } else 
 
 
 
-const jsonStringCache = new Map();
-
-const handlers = new Set
-
-
-([
-  {
+//
+const mapCacheHandler = (() => {
+  const jsonStringCache = new Map();
+  return {
     load: (hash) => {
       const stringified = jsonStringCache.get(hash);
-      if (stringified) return JSON.parse(stringified);
+      if (stringified) {
+        console.log("load", hash);
+        return JSON.parse(stringified);
+      }
     },
-    persist: (object, hash) =>
-      jsonStringCache.set(hash, JSON.stringify(object)),
-  },
-]);
+    persist: (object, hash) => {
+      console.log("persist", hash);
+      jsonStringCache.set(hash, JSON.stringify(object));
+    },
+    unlink: (hash) => {
+      console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)));
+      jsonStringCache.delete(hash);
+    },
+  };
+})();
+
+
+
+
+
+
+
+const handlers = new Set([mapCacheHandler]);
 
 const { hash, lookup, stats } = (() => {
   const hashCache = new WeakMap();
   const singletonForHash = new WeakValue();
   singletonForHash.onRemove = (hash) => {
-    console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)));
-    jsonStringCache.delete(hash);
+    for (const { unlink } of handlers) {
+      try {
+        _optionalChain$1([unlink, 'optionalCall', _ => _(hash)]);
+      } catch (e) {}
+    }
   };
 
   function lookupHash(hash) {
     if (!singletonForHash.has(hash)) {
       for (const { load } of handlers) {
         try {
-          const result = _optionalChain$1([load, 'optionalCall', _ => _(hash)]);
+          const result = _optionalChain$1([load, 'optionalCall', _2 => _2(hash)]);
           if (result === undefined) continue;
-          singletonForHash.set(hash, untransformObject(result));
+
+          const obj = untransformObject(result);
+          singletonForHash.set(hash, obj);
+          return obj;
         } catch (e) {}
       }
       throw new HashNotFoundError();
@@ -474,7 +494,7 @@ const { hash, lookup, stats } = (() => {
 
     if (!singletonForHash.has(hash)) {
       for (const { persist } of handlers) {
-        _optionalChain$1([persist, 'optionalCall', _2 => _2(transformed, hash)]);
+        _optionalChain$1([persist, 'optionalCall', _3 => _3(transformed, hash)]);
       }
       singletonForHash.set(hash, singleton);
       hashCache.set(singleton, result);
@@ -613,26 +633,21 @@ x(sayHi, document.getElementById("approot"));
 
 
  class Mould {
-   static __initStatic() {this.vault = new WeakValue();}
-
-   static __initStatic2() {this.createMeta = (
-    s,
-    message,
-    prev
-  ) => {
-    const size = JSON.stringify(s).length;
+   static __initStatic() {this.addMeta = (s, prev) => {
+    const size = JSON.stringify(
+      Object.assign({}, s, { [""]: undefined })
+    ).length;
     return {
-      message,
       size,
-      prev: _nullishCoalesce(_optionalChain([prev, 'optionalAccess', _6 => _6.id]), () => ( "")),
-      depth: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _7 => _7.m, 'access', _8 => _8.depth]), () => ( 0))) + 1,
-      weight: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _9 => _9.m, 'access', _10 => _10.weight]), () => ( 0))) + size,
+      prev: _nullishCoalesce(_optionalChain([prev, 'optionalAccess', _8 => _8.id]), () => ( "")),
+      depth: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _9 => _9.s, 'access', _10 => _10[""], 'optionalAccess', _11 => _11.depth]), () => ( 0))) + 1,
+      weight: (_nullishCoalesce(_optionalChain([prev, 'optionalAccess', _12 => _12.s, 'access', _13 => _13[""], 'optionalAccess', _14 => _14.weight]), () => ( 0))) + size,
     };
   };}
 
-   static __initStatic3() {this.hash = hash;}
+   static __initStatic2() {this.hash = hash;}
 
-   static __initStatic4() {this.getCache = (() => {
+   static __initStatic3() {this.getCache = (() => {
     const caches = new WeakMap();
     return (cls) => {
       if (!caches.has(cls)) caches.set(cls, new WeakMap());
@@ -659,8 +674,8 @@ x(sayHi, document.getElementById("approot"));
     const Ctor = this.constructor ;
 
     const nextMould = new Ctor({
-      m: Mould.createMeta(nextS, this),
-      s: nextS,
+      [""]: Mould.addMeta(nextS, this),
+      ...nextS,
     });
 
     for (const handler of this.#handlers) {
@@ -683,10 +698,13 @@ x(sayHi, document.getElementById("approot"));
 
   
   
-  
 
-  constructor(s, m = Mould.createMeta(s)) {
-    const [id, { m: singleM, s: singleton }] = Mould.hash({ m, s });
+  constructor(source) {
+    const [id, singleton] = Mould.hash(
+      ("" in source
+        ? source
+        : { [""]: Mould.addMeta(source), ...source }) 
+    );
 
     // check if an object already exists, if so, return that one
     const cache = Mould.getCache(this.constructor);
@@ -695,11 +713,10 @@ x(sayHi, document.getElementById("approot"));
 
     cache.set(singleton, this);
 
-    this.id = id;
-    this.s = singleton;
-    this.m = singleM;
+    Object.defineProperty(this, "id", { enumerable: false, value: id });
+    Object.defineProperty(this, "s", { enumerable: false, value: singleton });
   }
-} Mould.__initStatic(); Mould.__initStatic2(); Mould.__initStatic3(); Mould.__initStatic4();
+} Mould.__initStatic(); Mould.__initStatic2(); Mould.__initStatic3();
 
 // type coord2d = { x: number; y: number };
 // type lineShape = { [key in string]: coord2d };
@@ -724,6 +741,10 @@ class Point extends Mould {constructor(...args) { super(...args); Point.prototyp
 
 // type $<O extends Mould<any>> = (handler: (value: O) => any) => O;
 
+const filterMetaEntry = (
+  entry
+) => entry[0] !== "";
+
 class Line extends Mould {constructor(...args2) { super(...args2); Line.prototype.__init3.call(this); }
   // declare $: $<this>;
 
@@ -733,12 +754,11 @@ class Line extends Mould {constructor(...args2) { super(...args2); Line.prototyp
   }
 
    __init3() {this.coords = Object.entries(this.s)
-    .filter(([k]) => k !== "")
+    .filter(filterMetaEntry)
     .map(([, coord]) => new Point(coord));}
 }
 
 let line = new Line({}).$((next) => {
-  console.log({ next });
   line = next;
 });
 
