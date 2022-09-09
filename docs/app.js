@@ -336,7 +336,7 @@ const mapCacheHandler = (() => {
     },
     unlink: (hash) => {
       console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)));
-      jsonStringCache.delete(hash);
+      // jsonStringCache.delete(hash);
     },
   };
 })();
@@ -372,6 +372,7 @@ const { hash, lookup, stats } = (() => {
           return obj;
         } catch (e) {}
       }
+      // console.log(hash);
       throw new HashNotFoundError();
     }
     return singletonForHash.get(hash);
@@ -505,7 +506,7 @@ const { hash, lookup, stats } = (() => {
   }
 
   function hash(source) {
-    // if (hashCache.has(source)) return hashCache.get(source)! as any;
+    if (hashCache.has(source)) return hashCache.get(source) ;
 
     const transformed = transformObject(source);
 
@@ -619,6 +620,22 @@ class HashIsArrayError extends Error {}
 // })();
 
 function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+// import data from "./data";
+// window.setTimeout(() => {
+//   console.time("items");
+//   for (const item of data) {
+//     console.log(hash(item));
+//   }
+//   console.time("dataonly");
+//   console.log(hash(data));
+//   console.timeEnd("items");
+//   console.timeEnd("dataonly");
+
+//   console.time("dataonly");
+//   console.log(hash(data));
+//   console.timeEnd("dataonly");
+// }, 1000);
+
 const name = "Wieger";
 const sayHi = $`<h1>Hello ${name}</h1>`;
 x(sayHi, document.getElementById("approot"));

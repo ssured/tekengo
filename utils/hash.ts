@@ -33,7 +33,7 @@ const mapCacheHandler: handler = (() => {
     },
     unlink: (hash) => {
       console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)!));
-      jsonStringCache.delete(hash);
+      // jsonStringCache.delete(hash);
     },
   };
 })();
@@ -69,6 +69,7 @@ export const { hash, lookup, stats } = (() => {
           return obj;
         } catch (e) {}
       }
+      // console.log(hash);
       throw new HashNotFoundError();
     }
     return singletonForHash.get(hash)!;
@@ -202,7 +203,7 @@ export const { hash, lookup, stats } = (() => {
   }
 
   function hash<O extends JSONObject>(source: O): readonly [string, O] {
-    // if (hashCache.has(source)) return hashCache.get(source)! as any;
+    if (hashCache.has(source)) return hashCache.get(source)! as any;
 
     const transformed = transformObject(source);
 

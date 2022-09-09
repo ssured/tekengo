@@ -4,6 +4,22 @@ import { html, render } from "lit-html";
 
 import { hash, JSONObject, stats } from "../utils/hash";
 
+// import data from "./data";
+// window.setTimeout(() => {
+//   console.time("items");
+//   for (const item of data) {
+//     console.log(hash(item));
+//   }
+//   console.time("dataonly");
+//   console.log(hash(data));
+//   console.timeEnd("items");
+//   console.timeEnd("dataonly");
+
+//   console.time("dataonly");
+//   console.log(hash(data));
+//   console.timeEnd("dataonly");
+// }, 1000);
+
 const name = "Wieger";
 const sayHi = html`<h1>Hello ${name}</h1>`;
 render(sayHi, document.getElementById("approot")!);
