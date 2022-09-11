@@ -24,10 +24,14 @@
     "@rollup/plugin-commonjs": "^22.0.1",
     "@rollup/plugin-node-resolve": "^13.3.0",
     "@rollup/plugin-sucrase": "^4.0.4",
+    "@types/better-sqlite3": "^7.6.0",
+    "nodemon": "^2.0.19",
     "rollup": "^2.75.7",
-    "rollup-plugin-serve": "^2.0.0"
+    "rollup-plugin-serve": "^2.0.0",
+    "ts-node": "^10.9.1"
   },
   "dependencies": {
+    "better-sqlite3": "^7.6.2",
     "lit-html": "^2.2.6",
     "nano-css": "^5.3.5",
     "rollup-plugin-livereload": "^2.0.5"

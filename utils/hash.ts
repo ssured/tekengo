@@ -1,5 +1,5 @@
-import { sha256 } from "./sha256.js";
-import { WeakValue } from "./weak-value.js";
+import { sha256 } from "./sha256";
+import { WeakValue } from "./weak-value";
 
 export type JSONObject<T = never> = { [x: string]: JSONValue<T> };
 export type JSONArray<T = never> = Array<JSONValue<T>>;
@@ -16,35 +16,15 @@ type TransformedObject = {
   [x: string]: TransformedValue;
 };
 
-//
-const mapCacheHandler: handler = (() => {
-  const jsonStringCache = new Map<string, string>();
-  return {
-    load: (hash) => {
-      const stringified = jsonStringCache.get(hash);
-      if (stringified) {
-        console.log("load", hash);
-        return JSON.parse(stringified);
-      }
-    },
-    persist: (object, hash) => {
-      console.log("persist", hash);
-      jsonStringCache.set(hash, JSON.stringify(object));
-    },
-    unlink: (hash) => {
-      console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)!));
-      // jsonStringCache.delete(hash);
-    },
-  };
-})();
-
-type handler = {
+export type handler = {
   load?: (hash: string) => TransformedObject | undefined | void;
   persist?: (object: TransformedObject, hash: string) => void;
   unlink?: (hash: string) => void;
 };
 
-export const handlers = new Set<handler>([mapCacheHandler]);
+export const handlers = new Set<handler>([
+  // mapCacheHandler
+]);
 
 export const { hash, lookup, stats } = (() => {
   const hashCache = new WeakMap<JSONObject, readonly [string, JSONObject]>();
@@ -214,8 +194,7 @@ export const { hash, lookup, stats } = (() => {
   }
 
   function lookup(hash: string): JSONObject {
-    const result = singletonForHash.get(hash);
-    if (result == null) throw new HashNotFoundError(hash);
+    const result = lookupHash(hash);
     if (Array.isArray(result)) throw new HashIsArrayError(hash);
     return result;
   }

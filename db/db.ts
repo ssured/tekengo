@@ -1,25 +1,47 @@
-const bSql = require("better-sqlite3");
+import * as Database from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
+import { JSONObject } from "../utils/hash";
 
-module.exports.Db = class Db {
+export class Db {
+  #db: BetterSqlite3.Database;
   constructor(file = "data.db") {
-    const db = (this.db = bSql(file, {}));
+    this.#db = new Database(file, {});
 
-    setupSQLCommands.map((s) => db.prepare(s).run());
+    setupSQLCommands.map((s) => this.#db.prepare(s).run());
+  }
 
-    const insertIntoSource = this.db.prepare(
-      "INSERT OR IGNORE INTO nodes (sha, json) VALUES (?,?);"
+  persist(sha: string, json: JSONObject) {
+    this.#db
+      .prepare<[string, string]>(
+        "INSERT OR IGNORE INTO nodes (sha, json) VALUES (?,?);"
+      )
+      .run(sha, JSON.stringify(json));
+  }
+
+  allNodes() {
+    return this.#db.prepare<[]>("SELECT * FROM nodes;").all();
+  }
+
+  read(sha: string) {
+    return JSON.parse(
+      this.#db
+        .prepare<[string]>("SELECT json FROM nodes WHERE sha = ?;")
+        .get(sha).json
     );
+  }
 
-    insertIntoSource.run(
-      "1234",
-      JSON.stringify({
-        a: "A",
-        b: [0, "B"],
-        c: [1, "C"],
-      })
-    );
+  inverseProps(sha: string): string[] {
+    return this.#db
+      .prepare<[string]>("SELECT DISTINCT p FROM edges WHERE t = ?;")
+      .all(sha)
+      .map(({ p }) => p);
+  }
 
-    console.log(this.db.prepare("SELECT * FROM edges").get());
+  inverseProp(sha: string, prop: string): string[] {
+    return this.#db
+      .prepare<[string, string]>("SELECT s FROM edges WHERE t = ? AND p = ?;")
+      .all(sha, prop)
+      .map(({ s }) => s);
   }
 
   //   read(subj: string): { p: string; o: string; t: number }[];
@@ -48,7 +70,7 @@ module.exports.Db = class Db {
    */
 
   //   }
-};
+}
 
 const setupSQLCommands = [
   `
@@ -64,8 +86,9 @@ const setupSQLCommands = [
 
   `CREATE TABLE IF NOT EXISTS edges (
     s TEXT NOT NULL, 
+    p TEXT NOT NULL,
     t TEXT NOT NULL, 
-    PRIMARY KEY (s, t)
+    PRIMARY KEY (s, p, t)
   );`,
 
   //   `CREATE INDEX IF NOT EXISTS nodes_idx_sha ON nodes(sha);`,
@@ -81,14 +104,15 @@ const setupSQLCommands = [
   `CREATE TRIGGER IF NOT EXISTS update_edges_on_insert
     AFTER INSERT ON nodes
   BEGIN
-    INSERT INTO edges(s, t)
+    INSERT INTO edges(s, p, t)
       SELECT
         new.sha s,
-        entry.value ->> 1 t
+        entry.key p,
+        json_extract(entry.value, '$[0]') t
       FROM
         json_each(new.json) as entry
       WHERE
-        entry.type = 'array' AND entry.value ->> 0 = 0 AND json_type(entry.value -> 1) = 'text';
+        entry.type = 'array' AND json_type(entry.value, '$[0]') = 'text';
   END;
   `,
 ];
