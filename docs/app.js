@@ -319,35 +319,15 @@ function _nullishCoalesce$1(lhs, rhsFn) { if (lhs != null) { return lhs; } else 
 
 
 
-//
-const mapCacheHandler = (() => {
-  const jsonStringCache = new Map();
-  return {
-    load: (hash) => {
-      const stringified = jsonStringCache.get(hash);
-      if (stringified) {
-        console.log("load", hash);
-        return JSON.parse(stringified);
-      }
-    },
-    persist: (object, hash) => {
-      console.log("persist", hash);
-      jsonStringCache.set(hash, JSON.stringify(object));
-    },
-    unlink: (hash) => {
-      console.log("removed", hash, JSON.parse(jsonStringCache.get(hash)));
-      // jsonStringCache.delete(hash);
-    },
-  };
-})();
 
 
 
 
 
 
-
-const handlers = new Set([mapCacheHandler]);
+const handlers = new Set([
+  // mapCacheHandler
+]);
 
 const { hash, lookup, stats } = (() => {
   const hashCache = new WeakMap();
@@ -517,8 +497,7 @@ const { hash, lookup, stats } = (() => {
   }
 
   function lookup(hash) {
-    const result = singletonForHash.get(hash);
-    if (result == null) throw new HashNotFoundError(hash);
+    const result = lookupHash(hash);
     if (Array.isArray(result)) throw new HashIsArrayError(hash);
     return result;
   }
