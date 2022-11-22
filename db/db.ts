@@ -1,4 +1,4 @@
-import * as Database from "better-sqlite3";
+import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { JSONObject } from "../utils/hash";
 
@@ -23,11 +23,10 @@ export class Db {
   }
 
   read(sha: string) {
-    return JSON.parse(
-      this.#db
-        .prepare<[string]>("SELECT json FROM nodes WHERE sha = ?;")
-        .get(sha).json
-    );
+    const result = this.#db
+      .prepare<[string]>("SELECT json FROM nodes WHERE sha = ?;")
+      .get(sha);
+    return result && JSON.parse(result.json);
   }
 
   inverseProps(sha: string): string[] {

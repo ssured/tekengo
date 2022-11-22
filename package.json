@@ -7,7 +7,7 @@
     "doc": "docs"
   },
   "scripts": {
-    "dev": "rollup -w --config rollup.config.js",
+    "dev": "rollup -w --config ./rollup/config.ts --configPlugin typescript",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -24,16 +24,24 @@
     "@rollup/plugin-commonjs": "^22.0.1",
     "@rollup/plugin-node-resolve": "^13.3.0",
     "@rollup/plugin-sucrase": "^4.0.4",
+    "@rollup/plugin-typescript": "^9.0.2",
     "@types/better-sqlite3": "^7.6.0",
+    "@types/ws": "^8.5.3",
+    "chalk": "^5.1.2",
     "nodemon": "^2.0.19",
     "rollup": "^2.75.7",
     "rollup-plugin-serve": "^2.0.0",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "tslib": "^2.4.1",
+    "ws": "^8.11.0"
   },
   "dependencies": {
     "better-sqlite3": "^7.6.2",
     "lit-html": "^2.2.6",
+    "mobx": "^6.7.0",
+    "mobx-utils": "^6.0.5",
     "nano-css": "^5.3.5",
-    "rollup-plugin-livereload": "^2.0.5"
+    "rollup-plugin-livereload": "^2.0.5",
+    "zod": "^3.19.1"
   }
 }
