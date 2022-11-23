@@ -76,7 +76,7 @@ export const PATHS = Symbol();
 type refProxy = JSONObject & {
   [HASH]: string;
   [IS_PROXY]: true;
-  [REGISTER_INVERSE](parent: refProxy, key: string): void;
+  [REGISTER_INVERSE](parent: refProxy, key?: string): void;
   [PATHS]: string[][];
   (): void;
 };
@@ -95,14 +95,22 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
     for (const handler of onUnobserved) handler();
   });
 
-  const references = new Map<refProxy, Set<string>>();
-  onUnobserved.add(() => references.clear());
+  // nodes which point to this node with the exact properties
+  const referencedBy = new Map<refProxy, Set<string>>();
+  onUnobserved.add(() => referencedBy.clear());
 
+  // nodes this node points to
+  const references = new Set<refProxy>();
+  onUnobserved.add(() => {
+    // cleanup inverse references
+    for (const reference of references) reference[REGISTER_INVERSE](node);
+    references.clear();
+  });
+
+  // Watch for data, once data is there, add it to the node
   if (!(hash in knownObjects)) {
     runInAction(() => requestedHashes.add(hash));
   }
-
-  // Watch for data, once data is there, add it to the node
   onUnobserved.add(
     reaction(
       () => knownObjects[hash],
@@ -125,14 +133,22 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
     )
   );
 
-  const registerInverse = (parent: refProxy, key: string) => {
-    if (!references.has(parent)) references.set(parent, new Set());
-    references.get(parent)!.add(key);
+  // Keep administration of nodes pointing to me
+  const registerInverse = (parent: refProxy, key?: string) => {
+    if (typeof key === "string") {
+      // register
+      if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
+      referencedBy.get(parent)!.add(key);
+    } else {
+      // unregister
+      referencedBy.delete(parent);
+    }
   };
 
   // Tells all known paths to this node
   const paths = () => {
-    const paths = Array.from(references.entries()).flatMap(([parent, keys]) =>
+    // return [[hash]];
+    const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
       parent[PATHS].flatMap((path) =>
         Array.from(keys).map((key) => path.concat(key))
       )
@@ -140,28 +156,32 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
     return paths.length === 0 ? [[hash]] : paths;
   };
 
-  const o = new Proxy(source, {
+  const node = new Proxy(source, {
     get(source, k) {
       atom.reportObserved();
 
-      if (k === HASH) return hash;
-      if (k === IS_PROXY) return true;
-      if (k === REGISTER_INVERSE) return registerInverse;
-      if (k === PATHS) return paths();
+      if (typeof k === "symbol") {
+        if (k === HASH) return hash;
+        if (k === IS_PROXY) return true;
+        if (k === REGISTER_INVERSE) return registerInverse;
+        if (k === PATHS) return paths();
+        return Reflect.get(source, k);
+      }
 
       const result = decodeValue(Reflect.get(source, k));
 
       if (isProxy(result) && typeof k === "string") {
-        result[REGISTER_INVERSE](o, k);
+        references.add(result);
+        result[REGISTER_INVERSE](node, k);
       }
 
       return result;
     },
     set(source, k, v) {
       console.log("set", source, k, v);
-      if (references.size === 0) {
+      if (referencedBy.size === 0) {
         // this is root
-        const nextValue = { ...o, [k]: v };
+        const nextValue = { ...node, [k]: v };
         runInAction(() => {
           nextObjects[hash] = (
             encodeValue(nextValue) as EncodedJSONObjectRef
@@ -170,8 +190,8 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
         return true;
       }
 
-      const newObject = { ...o, [k]: v };
-      for (const [reference, keys] of references) {
+      const newObject = { ...node, [k]: v };
+      for (const [reference, keys] of referencedBy) {
         for (const key of keys) {
           reference[key] = newObject;
         }
@@ -181,7 +201,7 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
     },
   }) as refProxy;
 
-  return o;
+  return node;
 });
 
 const decodeValue = computedFn((e: EncodedJSON): JSONValue => {
