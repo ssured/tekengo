@@ -1,4 +1,4 @@
-import { action, createAtom, observable, runInAction } from "mobx";
+import { action, createAtom, observable, runInAction, reaction } from "mobx";
 import { computedFn } from "mobx-utils";
 import { sha256 } from "../utils/sha256";
 
@@ -39,6 +39,7 @@ export const stableStringify = <O extends JSONObject>(
 
 export const knownObjects = observable({}) as Record<string, string>;
 export const requestedHashes = observable.set<string>();
+export const nextObjects = observable({}) as Record<string, string>;
 
 export const loadJSON = action((encodedObjectString: string) => {
   const hash = sha256(encodedObjectString);
@@ -68,67 +69,131 @@ export const encodeObject = (o: JSONObject): EncodedJSONObject =>
     Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v)])
   );
 
+const HASH = Symbol();
+const IS_PROXY = Symbol();
+const REGISTER_INVERSE = Symbol();
+export const PATHS = Symbol();
+type refProxy = JSONObject & {
+  [HASH]: string;
+  [IS_PROXY]: true;
+  [REGISTER_INVERSE](parent: refProxy, key: string): void;
+  [PATHS]: string[][];
+  (): void;
+};
+
+const isProxy = (u: JSONValue): u is refProxy =>
+  (typeof u === "object" && u && (u as any)[IS_PROXY]) || false;
+
 const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
-  if (!(hash in knownObjects)) runInAction(() => requestedHashes.add(hash));
+  const source = Object.create(null) as {};
 
-  const stringified = knownObjects[hash];
-  const obj =
-    stringified &&
-    (() => {
-      try {
-        return JSON.parse(stringified);
-      } catch (e) {
-        console.error("could not parse " + stringified);
-        return undefined;
-      }
-    })();
+  const onUnobserved = new Set<() => void>([
+    () => console.log("unobserve handlers " + hash),
+  ]);
 
-  const atom = createAtom(
-    hash,
-    () => {},
-    () => {
-      console.log("unobserve " + hash);
-    }
+  const atom = createAtom(`Node-${hash}`, undefined, () => {
+    for (const handler of onUnobserved) handler();
+  });
+
+  const references = new Map<refProxy, Set<string>>();
+  onUnobserved.add(() => references.clear());
+
+  if (!(hash in knownObjects)) {
+    runInAction(() => requestedHashes.add(hash));
+  }
+
+  // Watch for data, once data is there, add it to the node
+  onUnobserved.add(
+    reaction(
+      () => knownObjects[hash],
+      (stringified, _prev, r) => {
+        if (!stringified) return;
+        if (sha256(stringified) !== hash) return console.error("invalid hash");
+        try {
+          const value = JSON.parse(stringified);
+          if (typeof value === "object" && value && !Array.isArray(value)) {
+            Object.assign(source, value);
+            atom.reportChanged();
+            r.dispose();
+          }
+        } catch (e) {
+          console.error("could not parse " + stringified);
+          return undefined;
+        }
+      },
+      { fireImmediately: true }
+    )
   );
 
-  const source = obj || {};
-  const changes = Object.create(source);
+  const registerInverse = (parent: refProxy, key: string) => {
+    if (!references.has(parent)) references.set(parent, new Set());
+    references.get(parent)!.add(key);
+  };
 
-  const o = new Proxy(changes, {
-    get(_, k) {
-      if (k === "toJSON")
-        return () => {
-          obj && atom.reportObserved();
-          const keys = [] as string[];
-          for (const key in source) keys.push(key);
-          keys.sort();
-          return Object.fromEntries(keys.map((k) => [k, source[k]]));
-        };
-      obj && atom.reportObserved();
-      const v = Reflect.get(_, k);
-      return decodeValue(v);
+  // Tells all known paths to this node
+  const paths = () => {
+    const paths = Array.from(references.entries()).flatMap(([parent, keys]) =>
+      parent[PATHS].flatMap((path) =>
+        Array.from(keys).map((key) => path.concat(key))
+      )
+    );
+    return paths.length === 0 ? [[hash]] : paths;
+  };
+
+  const o = new Proxy(source, {
+    get(source, k) {
+      atom.reportObserved();
+
+      if (k === HASH) return hash;
+      if (k === IS_PROXY) return true;
+      if (k === REGISTER_INVERSE) return registerInverse;
+      if (k === PATHS) return paths();
+
+      const result = decodeValue(Reflect.get(source, k));
+
+      if (isProxy(result) && typeof k === "string") {
+        result[REGISTER_INVERSE](o, k);
+      }
+
+      return result;
     },
-    set(_, k, v) {
-      console.log({ _, k, v });
-      runInAction(() => Reflect.set(_, k, v));
-      atom.reportChanged();
+    set(source, k, v) {
+      console.log("set", source, k, v);
+      if (references.size === 0) {
+        // this is root
+        const nextValue = { ...o, [k]: v };
+        runInAction(() => {
+          nextObjects[hash] = (
+            encodeValue(nextValue) as EncodedJSONObjectRef
+          )[0];
+        });
+        return true;
+      }
+
+      const newObject = { ...o, [k]: v };
+      for (const [reference, keys] of references) {
+        for (const key of keys) {
+          reference[key] = newObject;
+        }
+      }
+
       return true;
     },
-  });
+  }) as refProxy;
 
   return o;
 });
 
-const decodeValue = (e: EncodedJSON): JSONValue => {
+const decodeValue = computedFn((e: EncodedJSON): JSONValue => {
   if (!Array.isArray(e)) return e;
   const item = e[0];
   if (typeof item === "string") return decodeRef(item);
   return item.map((i) => decodeValue(i));
-};
+});
 
-export const open = (hash: string) => decodeValue([hash]) as JSONObject;
+export const open = (hash: string) => decodeValue([hash]) as refProxy;
 
-export const decodeObject = (e: EncodedJSONObject): JSONObject =>
-  Object.fromEntries(
-    Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
-  );
+// export const decodeObject = (e: EncodedJSONObject): JSONObject =>
+//   Object.fromEntries(
+//     Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
+//   );

@@ -7181,6 +7181,7 @@ const stableStringify = (
 
 const knownObjects = observable({}) ;
 const requestedHashes = observable.set();
+const nextObjects = observable({}) ;
 
 const loadJSON = action((encodedObjectString) => {
   const hash = sha256(encodedObjectString);
@@ -7210,71 +7211,136 @@ const encodeObject = (o) =>
     Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v)])
   );
 
+const HASH = Symbol();
+const IS_PROXY = Symbol();
+const REGISTER_INVERSE = Symbol();
+const PATHS = Symbol();
+
+
+
+
+
+
+
+
+const isProxy = (u) =>
+  (typeof u === "object" && u && (u )[IS_PROXY]) || false;
+
 const decodeRef = computedFn((hash) => {
-  if (!(hash in knownObjects)) runInAction(() => requestedHashes.add(hash));
+  const source = Object.create(null) ;
 
-  const stringified = knownObjects[hash];
-  const obj =
-    stringified &&
-    (() => {
-      try {
-        return JSON.parse(stringified);
-      } catch (e) {
-        console.error("could not parse " + stringified);
-        return undefined;
-      }
-    })();
+  const onUnobserved = new Set([
+    () => console.log("unobserve handlers " + hash),
+  ]);
 
-  const atom = createAtom(
-    hash,
-    () => {},
-    () => {
-      console.log("unobserve " + hash);
-    }
+  const atom = createAtom(`Node-${hash}`, undefined, () => {
+    for (const handler of onUnobserved) handler();
+  });
+
+  const references = new Map();
+  onUnobserved.add(() => references.clear());
+
+  if (!(hash in knownObjects)) {
+    runInAction(() => requestedHashes.add(hash));
+  }
+
+  // Watch for data, once data is there, add it to the node
+  onUnobserved.add(
+    reaction(
+      () => knownObjects[hash],
+      (stringified, _prev, r) => {
+        if (!stringified) return;
+        if (sha256(stringified) !== hash) return console.error("invalid hash");
+        try {
+          const value = JSON.parse(stringified);
+          if (typeof value === "object" && value && !Array.isArray(value)) {
+            Object.assign(source, value);
+            atom.reportChanged();
+            r.dispose();
+          }
+        } catch (e) {
+          console.error("could not parse " + stringified);
+          return undefined;
+        }
+      },
+      { fireImmediately: true }
+    )
   );
 
-  const source = obj || {};
-  const changes = Object.create(source);
+  const registerInverse = (parent, key) => {
+    if (!references.has(parent)) references.set(parent, new Set());
+    references.get(parent).add(key);
+  };
 
-  const o = new Proxy(changes, {
-    get(_, k) {
-      if (k === "toJSON")
-        return () => {
-          obj && atom.reportObserved();
-          const keys = [] ;
-          for (const key in source) keys.push(key);
-          keys.sort();
-          return Object.fromEntries(keys.map((k) => [k, source[k]]));
-        };
-      obj && atom.reportObserved();
-      const v = Reflect.get(_, k);
-      return decodeValue(v);
+  // Tells all known paths to this node
+  const paths = () => {
+    const paths = Array.from(references.entries()).flatMap(([parent, keys]) =>
+      parent[PATHS].flatMap((path) =>
+        Array.from(keys).map((key) => path.concat(key))
+      )
+    );
+    return paths.length === 0 ? [[hash]] : paths;
+  };
+
+  const o = new Proxy(source, {
+    get(source, k) {
+      atom.reportObserved();
+
+      if (k === HASH) return hash;
+      if (k === IS_PROXY) return true;
+      if (k === REGISTER_INVERSE) return registerInverse;
+      if (k === PATHS) return paths();
+
+      const result = decodeValue(Reflect.get(source, k));
+
+      if (isProxy(result) && typeof k === "string") {
+        result[REGISTER_INVERSE](o, k);
+      }
+
+      return result;
     },
-    set(_, k, v) {
-      console.log({ _, k, v });
-      runInAction(() => Reflect.set(_, k, v));
-      atom.reportChanged();
+    set(source, k, v) {
+      console.log("set", source, k, v);
+      if (references.size === 0) {
+        // this is root
+        const nextValue = { ...o, [k]: v };
+        runInAction(() => {
+          nextObjects[hash] = (
+            encodeValue(nextValue) 
+          )[0];
+        });
+        return true;
+      }
+
+      const newObject = { ...o, [k]: v };
+      for (const [reference, keys] of references) {
+        for (const key of keys) {
+          reference[key] = newObject;
+        }
+      }
+
       return true;
     },
-  });
+  }) ;
 
   return o;
 });
 
-const decodeValue = (e) => {
+const decodeValue = computedFn((e) => {
   if (!Array.isArray(e)) return e;
   const item = e[0];
   if (typeof item === "string") return decodeRef(item);
   return item.map((i) => decodeValue(i));
-};
+});
 
 const open = (hash) => decodeValue([hash]) ;
 
-const decodeObject = (e) =>
-  Object.fromEntries(
-    Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
-  );
+// export const decodeObject = (e: EncodedJSONObject): JSONObject =>
+//   Object.fromEntries(
+//     Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
+//   );
 
+function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
 
 const sendMessage = new Promise((res) => {
@@ -7324,48 +7390,67 @@ observe(requestedHashes, (change) => {
 
 // const stringify = (o: JSONObject): string => stableStringify(encodeObject(o));
 
-const state = observable.object({
-  x: 0,
-  y: 0,
+const rootHash = observable.box(
+  sessionStorage.start ||
+    (sessionStorage.start = loadJSON(
+      stableStringify(
+        encodeObject({
+          today: {
+            year: new Date().getFullYear(),
+            month: new Date().getMonth() + 1,
+            day: new Date().getDate(),
+          },
+          x: 0,
+          y: 0,
+        })
+      )
+    ))
+);
+
+const nextSha = computed(
+  () => nextObjects[rootHash.get()] 
+);
+
+const persist = action(() => {
+  const next = nextSha.get();
+  if (!next) return;
+  delete nextObjects[rootHash.get()];
+  rootHash.set(next);
+  sessionStorage.start = next;
 });
 
-const startSha =
-  // "470b58955244ad649c01fe62be7e0ebe7950f113999e748c500b7481d2351ffa";
-  loadJSON(
-    stableStringify(
-      encodeObject({
-        year: new Date().getFullYear(),
-        month: new Date().getMonth() + 1,
-        day: new Date().getDate(),
-      })
-    )
-  );
-console.log({ startSha });
-
 const template = computedFn(
-  (state) => {
-    const { year } = state;
+  (state
+
+
+
+) => {
+    const { today } = state;
+    const { x = 0, y = 0 } = state;
 
     return $`
-      <h1>${year}</h1>
+      <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
+      <pre>paths: ${today && JSON.stringify((today )[PATHS])}</pre>
+      <h1>${_optionalChain([today, 'optionalAccess', _ => _.year])} ${x},${y}</h1>
       <input
         type="number"
-        value=${"" + year}
-        @change=${(e) =>
-          (state.year = e.target.valueAsNumber)}
+        value=${"" + _optionalChain([today, 'optionalAccess', _2 => _2.year])}
+        @change=${(e) => (
+          console.log(
+            "change",
+            e.target.valueAsNumber,
+            typeof state.today,
+            state.today
+          ),
+          state.today
+            ? (state.today.year = e.target.valueAsNumber)
+            : console.log("no today")
+        )}
       />
-      <pre>
-${JSON.stringify(
-          decodeObject({
-            b: [
-              "6907c51a284e8c84a0a86d160d34fddc6867f1f9533ca7c4d1f56b0cf1ebfcd7",
-            ],
-          }),
-          null,
-          2
-        )}</pre
-      >
+      <button @click=${() => (state.x = x + 1)}>${x}</button>
+      <button @click=${() => persist()}>Save ${nextSha.get() || "-"}</button>
       <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
+      <pre>${JSON.stringify(nextObjects)}</pre>
       <pre>${JSON.stringify(state)}</pre>
     `;
   }
@@ -7373,7 +7458,7 @@ ${JSON.stringify(
 
 // setTimeout(
 autorun(function mainLoop() {
-  const state = open(startSha) ;
+  const state = open(rootHash.get()) ;
   x(template(state), document.getElementById("approot"));
 });
 // 5000
@@ -7381,10 +7466,10 @@ autorun(function mainLoop() {
 
 console.log("started", Date.now());
 
-document.body.addEventListener(
-  "mousemove",
-  action((e) => {
-    state.x = e.clientX;
-    state.y = e.clientY;
-  })
-);
+// document.body.addEventListener(
+//   "mousemove",
+//   action((e: MouseEvent) => {
+//     state.x = e.clientX;
+//     state.y = e.clientY;
+//   })
+// );

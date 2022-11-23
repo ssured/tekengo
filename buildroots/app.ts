@@ -1,17 +1,17 @@
 import { html, render } from "lit-html";
-import { action, autorun, observable, observe } from "mobx";
+import { action, computed, autorun, observable, observe } from "mobx";
 import { computedFn } from "mobx-utils";
 import "../styling";
 import {
-  decodeObject,
   encodeObject,
   knownObjects,
   loadJSON,
   open,
   requestedHashes,
   stableStringify,
+  nextObjects,
+  PATHS,
 } from "../merkledag";
-import { JSONObject } from "../utils/hash";
 import { sha256 } from "../utils/sha256";
 
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
@@ -63,48 +63,67 @@ observe(requestedHashes, (change) => {
 
 // const stringify = (o: JSONObject): string => stableStringify(encodeObject(o));
 
-const state = observable.object({
-  x: 0,
-  y: 0,
+const rootHash = observable.box(
+  sessionStorage.start ||
+    (sessionStorage.start = loadJSON(
+      stableStringify(
+        encodeObject({
+          today: {
+            year: new Date().getFullYear(),
+            month: new Date().getMonth() + 1,
+            day: new Date().getDate(),
+          },
+          x: 0,
+          y: 0,
+        })
+      )
+    ))
+);
+
+const nextSha = computed(
+  () => nextObjects[rootHash.get()] as string | undefined
+);
+
+const persist = action(() => {
+  const next = nextSha.get();
+  if (!next) return;
+  delete nextObjects[rootHash.get()];
+  rootHash.set(next);
+  sessionStorage.start = next;
 });
 
-const startSha =
-  // "470b58955244ad649c01fe62be7e0ebe7950f113999e748c500b7481d2351ffa";
-  loadJSON(
-    stableStringify(
-      encodeObject({
-        year: new Date().getFullYear(),
-        month: new Date().getMonth() + 1,
-        day: new Date().getDate(),
-      })
-    )
-  );
-console.log({ startSha });
-
 const template = computedFn(
-  (state: { year: number; month: number; day: number }) => {
-    const { year } = state;
+  (state: {
+    today?: { year: number; month: number; day: number };
+    x?: number;
+    y?: number;
+  }) => {
+    const { today } = state;
+    const { x = 0, y = 0 } = state;
 
     return html`
-      <h1>${year}</h1>
+      <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
+      <pre>paths: ${today && JSON.stringify((today as any)[PATHS])}</pre>
+      <h1>${today?.year} ${x},${y}</h1>
       <input
         type="number"
-        value=${"" + year}
-        @change=${(e: Event & { target: HTMLInputElement }) =>
-          (state.year = e.target.valueAsNumber)}
+        value=${"" + today?.year}
+        @change=${(e: Event & { target: HTMLInputElement }) => (
+          console.log(
+            "change",
+            e.target.valueAsNumber,
+            typeof state.today,
+            state.today
+          ),
+          state.today
+            ? (state.today.year = e.target.valueAsNumber)
+            : console.log("no today")
+        )}
       />
-      <pre>
-${JSON.stringify(
-          decodeObject({
-            b: [
-              "6907c51a284e8c84a0a86d160d34fddc6867f1f9533ca7c4d1f56b0cf1ebfcd7",
-            ],
-          }),
-          null,
-          2
-        )}</pre
-      >
+      <button @click=${() => (state.x = x + 1)}>${x}</button>
+      <button @click=${() => persist()}>Save ${nextSha.get() || "-"}</button>
       <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
+      <pre>${JSON.stringify(nextObjects)}</pre>
       <pre>${JSON.stringify(state)}</pre>
     `;
   }
@@ -112,7 +131,7 @@ ${JSON.stringify(
 
 // setTimeout(
 autorun(function mainLoop() {
-  const state = open(startSha) as any;
+  const state = open(rootHash.get()) as any;
   render(template(state), document.getElementById("approot")!);
 });
 // 5000
@@ -120,10 +139,10 @@ autorun(function mainLoop() {
 
 console.log("started", Date.now());
 
-document.body.addEventListener(
-  "mousemove",
-  action((e: MouseEvent) => {
-    state.x = e.clientX;
-    state.y = e.clientY;
-  })
-);
+// document.body.addEventListener(
+//   "mousemove",
+//   action((e: MouseEvent) => {
+//     state.x = e.clientX;
+//     state.y = e.clientY;
+//   })
+// );
