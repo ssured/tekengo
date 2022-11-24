@@ -7228,28 +7228,14 @@ const PATHS = Symbol();
 const isProxy = (u) =>
   (typeof u === "object" && u && (u )[IS_PROXY]) || false;
 
-const decodeRef = computedFn((hash) => {
+const getSingleton = computedFn((hash) => {
   const source = Object.create(null) ;
-
   const onUnobserved = new Set([
     () => console.log("unobserve handlers " + hash),
   ]);
-  let onNext = undefined;
 
   const atom = createAtom(`Node-${hash}`, undefined, () => {
     for (const handler of onUnobserved) handler();
-  });
-
-  // nodes which point to this node with the exact properties
-  const referencedBy = new Map();
-  onUnobserved.add(() => referencedBy.clear());
-
-  // nodes this node points to
-  const references = new Set();
-  onUnobserved.add(() => {
-    // cleanup inverse references
-    for (const reference of references) reference[REGISTER_INVERSE](node);
-    references.clear();
   });
 
   // Watch for data, once data is there, add it to the node
@@ -7277,6 +7263,34 @@ const decodeRef = computedFn((hash) => {
       { fireImmediately: true }
     )
   );
+
+  return {
+    source: new Proxy(source, {
+      get(source, p) {
+        atom.reportObserved();
+        return Reflect.get(source, p);
+      },
+    }),
+    onUnobserved,
+  };
+});
+
+const decodeRef = computedFn((hash) => {
+  const { source, onUnobserved } = getSingleton(hash);
+
+  let onNext = undefined;
+
+  // nodes which point to this node with the exact properties
+  const referencedBy = new Map();
+  onUnobserved.add(() => referencedBy.clear());
+
+  // nodes this node points to
+  const references = new Set();
+  onUnobserved.add(() => {
+    // cleanup inverse references
+    for (const reference of references) reference[REGISTER_INVERSE](node);
+    references.clear();
+  });
 
   // Keep administration of nodes pointing to me
   const registerInverse = (parent, key) => {
@@ -7309,8 +7323,6 @@ const decodeRef = computedFn((hash) => {
 
   const node = new Proxy(source, {
     get(source, k) {
-      atom.reportObserved();
-
       if (typeof k === "symbol") {
         if (k === HASH) return hash;
         if (k === IS_PROXY) return true;

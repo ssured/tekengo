@@ -86,28 +86,14 @@ type refProxy = JSONObject & {
 const isProxy = (u: JSONValue): u is refProxy =>
   (typeof u === "object" && u && (u as any)[IS_PROXY]) || false;
 
-const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
-  const source = Object.create(null) as {};
-
+const getSingleton = computedFn((hash: EncodedJSONObjectRef[0]) => {
+  const source = Object.create(null) as JSONObject;
   const onUnobserved = new Set<() => void>([
     () => console.log("unobserve handlers " + hash),
   ]);
-  let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
 
   const atom = createAtom(`Node-${hash}`, undefined, () => {
     for (const handler of onUnobserved) handler();
-  });
-
-  // nodes which point to this node with the exact properties
-  const referencedBy = new Map<refProxy, Set<string>>();
-  onUnobserved.add(() => referencedBy.clear());
-
-  // nodes this node points to
-  const references = new Set<refProxy>();
-  onUnobserved.add(() => {
-    // cleanup inverse references
-    for (const reference of references) reference[REGISTER_INVERSE](node);
-    references.clear();
   });
 
   // Watch for data, once data is there, add it to the node
@@ -135,6 +121,34 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
       { fireImmediately: true }
     )
   );
+
+  return {
+    source: new Proxy(source, {
+      get(source, p) {
+        atom.reportObserved();
+        return Reflect.get(source, p);
+      },
+    }),
+    onUnobserved,
+  };
+});
+
+const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
+  const { source, onUnobserved } = getSingleton(hash);
+
+  let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
+
+  // nodes which point to this node with the exact properties
+  const referencedBy = new Map<refProxy, Set<string>>();
+  onUnobserved.add(() => referencedBy.clear());
+
+  // nodes this node points to
+  const references = new Set<refProxy>();
+  onUnobserved.add(() => {
+    // cleanup inverse references
+    for (const reference of references) reference[REGISTER_INVERSE](node);
+    references.clear();
+  });
 
   // Keep administration of nodes pointing to me
   const registerInverse = (parent: refProxy, key?: string) => {
@@ -167,8 +181,6 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
 
   const node = new Proxy(source, {
     get(source, k) {
-      atom.reportObserved();
-
       if (typeof k === "symbol") {
         if (k === HASH) return hash;
         if (k === IS_PROXY) return true;
