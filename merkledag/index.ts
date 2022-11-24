@@ -72,11 +72,13 @@ export const encodeObject = (o: JSONObject): EncodedJSONObject =>
 const HASH = Symbol();
 const IS_PROXY = Symbol();
 const REGISTER_INVERSE = Symbol();
+const ON_NEXT = Symbol();
 export const PATHS = Symbol();
 type refProxy = JSONObject & {
   [HASH]: string;
   [IS_PROXY]: true;
   [REGISTER_INVERSE](parent: refProxy, key?: string): void;
+  [ON_NEXT](handler: (nextValue: JSONObject) => void): void;
   [PATHS]: string[][];
   (): void;
 };
@@ -90,6 +92,7 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
   const onUnobserved = new Set<() => void>([
     () => console.log("unobserve handlers " + hash),
   ]);
+  let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
 
   const atom = createAtom(`Node-${hash}`, undefined, () => {
     for (const handler of onUnobserved) handler();
@@ -156,6 +159,12 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
     return paths.length === 0 ? [[hash]] : paths;
   };
 
+  const setOnNext = (handler: (value: JSONObject) => void) => {
+    onNext = handler;
+  };
+
+  let changes: Record<string, any> = {};
+
   const node = new Proxy(source, {
     get(source, k) {
       atom.reportObserved();
@@ -165,6 +174,7 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
         if (k === IS_PROXY) return true;
         if (k === REGISTER_INVERSE) return registerInverse;
         if (k === PATHS) return paths();
+        if (k === ON_NEXT) return setOnNext;
         return Reflect.get(source, k);
       }
 
@@ -178,26 +188,27 @@ const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
       return result;
     },
     set(source, k, v) {
+      if (typeof k === "symbol") return false;
+
       console.log("set", source, k, v);
-      if (referencedBy.size === 0) {
-        // this is root
-        const nextValue = { ...node, [k]: v };
-        runInAction(() => {
-          nextObjects[hash] = (
-            encodeValue(nextValue) as EncodedJSONObjectRef
-          )[0];
-        });
+      changes[k] = v;
+      const nextNode = { ...node, ...changes };
+
+      if (onNext) {
+        onNext(nextNode);
         return true;
       }
 
-      const newObject = { ...node, [k]: v };
+      let didPropagate = false;
+
       for (const [reference, keys] of referencedBy) {
         for (const key of keys) {
-          reference[key] = newObject;
+          reference[key] = nextNode;
+          didPropagate = true;
         }
       }
 
-      return true;
+      return didPropagate;
     },
   }) as refProxy;
 
@@ -211,7 +222,13 @@ const decodeValue = computedFn((e: EncodedJSON): JSONValue => {
   return item.map((i) => decodeValue(i));
 });
 
-export const open = (hash: string) => decodeValue([hash]) as refProxy;
+export const open = computedFn(
+  (hash: string, onNext: (next: JSONObject) => void) => {
+    const value = decodeValue([hash]) as refProxy;
+    value[ON_NEXT](onNext);
+    return value;
+  }
+);
 
 // export const decodeObject = (e: EncodedJSONObject): JSONObject =>
 //   Object.fromEntries(

@@ -13,6 +13,7 @@ import {
   PATHS,
 } from "../merkledag";
 import { sha256 } from "../utils/sha256";
+import { JSONObject } from "../utils/hash";
 
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
 
@@ -80,18 +81,6 @@ const rootHash = observable.box(
     ))
 );
 
-const nextSha = computed(
-  () => nextObjects[rootHash.get()] as string | undefined
-);
-
-const persist = action(() => {
-  const next = nextSha.get();
-  if (!next) return;
-  delete nextObjects[rootHash.get()];
-  rootHash.set(next);
-  sessionStorage.start = next;
-});
-
 const template = computedFn(
   (state: {
     today?: { year: number; month: number; day: number };
@@ -121,7 +110,6 @@ const template = computedFn(
         )}
       />
       <button @click=${() => (state.x = x + 1)}>${x}</button>
-      <button @click=${() => persist()}>Save ${nextSha.get() || "-"}</button>
       <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
       <pre>${JSON.stringify(nextObjects)}</pre>
       <pre>${JSON.stringify(state)}</pre>
@@ -129,13 +117,24 @@ const template = computedFn(
   }
 );
 
-// setTimeout(
+const updateState = (nextValue: JSONObject) => {
+  const nextSha = loadJSON(
+    stableStringify(
+      encodeObject({
+        ...nextValue,
+        $: rootHash.get(),
+        $$: new Date().toISOString(),
+      })
+    )
+  );
+  rootHash.set(nextSha);
+  sessionStorage.start = nextSha;
+};
+
 autorun(function mainLoop() {
-  const state = open(rootHash.get()) as any;
+  const state = open(rootHash.get(), updateState) as any;
   render(template(state), document.getElementById("approot")!);
 });
-// 5000
-// );
 
 console.log("started", Date.now());
 

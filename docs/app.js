@@ -7214,7 +7214,9 @@ const encodeObject = (o) =>
 const HASH = Symbol();
 const IS_PROXY = Symbol();
 const REGISTER_INVERSE = Symbol();
+const ON_NEXT = Symbol();
 const PATHS = Symbol();
+
 
 
 
@@ -7232,6 +7234,7 @@ const decodeRef = computedFn((hash) => {
   const onUnobserved = new Set([
     () => console.log("unobserve handlers " + hash),
   ]);
+  let onNext = undefined;
 
   const atom = createAtom(`Node-${hash}`, undefined, () => {
     for (const handler of onUnobserved) handler();
@@ -7298,6 +7301,12 @@ const decodeRef = computedFn((hash) => {
     return paths.length === 0 ? [[hash]] : paths;
   };
 
+  const setOnNext = (handler) => {
+    onNext = handler;
+  };
+
+  let changes = {};
+
   const node = new Proxy(source, {
     get(source, k) {
       atom.reportObserved();
@@ -7307,6 +7316,7 @@ const decodeRef = computedFn((hash) => {
         if (k === IS_PROXY) return true;
         if (k === REGISTER_INVERSE) return registerInverse;
         if (k === PATHS) return paths();
+        if (k === ON_NEXT) return setOnNext;
         return Reflect.get(source, k);
       }
 
@@ -7320,26 +7330,27 @@ const decodeRef = computedFn((hash) => {
       return result;
     },
     set(source, k, v) {
+      if (typeof k === "symbol") return false;
+
       console.log("set", source, k, v);
-      if (referencedBy.size === 0) {
-        // this is root
-        const nextValue = { ...node, [k]: v };
-        runInAction(() => {
-          nextObjects[hash] = (
-            encodeValue(nextValue) 
-          )[0];
-        });
+      changes[k] = v;
+      const nextNode = { ...node, ...changes };
+
+      if (onNext) {
+        onNext(nextNode);
         return true;
       }
 
-      const newObject = { ...node, [k]: v };
+      let didPropagate = false;
+
       for (const [reference, keys] of referencedBy) {
         for (const key of keys) {
-          reference[key] = newObject;
+          reference[key] = nextNode;
+          didPropagate = true;
         }
       }
 
-      return true;
+      return didPropagate;
     },
   }) ;
 
@@ -7353,7 +7364,13 @@ const decodeValue = computedFn((e) => {
   return item.map((i) => decodeValue(i));
 });
 
-const open = (hash) => decodeValue([hash]) ;
+const open = computedFn(
+  (hash, onNext) => {
+    const value = decodeValue([hash]) ;
+    value[ON_NEXT](onNext);
+    return value;
+  }
+);
 
 // export const decodeObject = (e: EncodedJSONObject): JSONObject =>
 //   Object.fromEntries(
@@ -7361,6 +7378,7 @@ const open = (hash) => decodeValue([hash]) ;
 //   );
 
 function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
 
 const sendMessage = new Promise((res) => {
@@ -7427,18 +7445,6 @@ const rootHash = observable.box(
     ))
 );
 
-const nextSha = computed(
-  () => nextObjects[rootHash.get()] 
-);
-
-const persist = action(() => {
-  const next = nextSha.get();
-  if (!next) return;
-  delete nextObjects[rootHash.get()];
-  rootHash.set(next);
-  sessionStorage.start = next;
-});
-
 const template = computedFn(
   (state
 
@@ -7468,7 +7474,6 @@ const template = computedFn(
         )}
       />
       <button @click=${() => (state.x = x + 1)}>${x}</button>
-      <button @click=${() => persist()}>Save ${nextSha.get() || "-"}</button>
       <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
       <pre>${JSON.stringify(nextObjects)}</pre>
       <pre>${JSON.stringify(state)}</pre>
@@ -7476,13 +7481,24 @@ const template = computedFn(
   }
 );
 
-// setTimeout(
+const updateState = (nextValue) => {
+  const nextSha = loadJSON(
+    stableStringify(
+      encodeObject({
+        ...nextValue,
+        $: rootHash.get(),
+        $$: new Date().toISOString(),
+      })
+    )
+  );
+  rootHash.set(nextSha);
+  sessionStorage.start = nextSha;
+};
+
 autorun(function mainLoop() {
-  const state = open(rootHash.get()) ;
+  const state = open(rootHash.get(), updateState) ;
   x(template(state), document.getElementById("approot"));
 });
-// 5000
-// );
 
 console.log("started", Date.now());
 
