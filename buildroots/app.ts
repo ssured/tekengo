@@ -10,7 +10,7 @@ import {
   requestedHashes,
   stableStringify,
   nextObjects,
-  PATHS,
+  PATH,
 } from "../merkledag";
 import { sha256 } from "../utils/sha256";
 import { JSONObject } from "../utils/hash";
@@ -81,59 +81,53 @@ const rootHash = observable.box(
     ))
 );
 
-const template = computedFn(
-  (state: {
-    today?: { year: number; month: number; day: number };
-    x?: number;
-    y?: number;
-  }) => {
-    const { today } = state;
-    const { x = 0, y = 0 } = state;
+type rootState = {
+  today: { year: number; month: number; day: number };
+  x: number;
+  y: number;
+};
 
-    return html`
-      <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
-      <pre>paths: ${today && JSON.stringify((today as any)[PATHS])}</pre>
-      <h1>${today?.year} ${x},${y}</h1>
-      <input
-        type="number"
-        value=${"" + today?.year}
-        @change=${(e: Event & { target: HTMLInputElement }) => (
-          console.log(
-            "change",
-            e.target.valueAsNumber,
-            typeof state.today,
-            state.today
-          ),
-          state.today
-            ? (state.today.year = e.target.valueAsNumber)
-            : console.log("no today")
-        )}
-      />
-      <button @click=${() => (state.x = x + 1)}>${x}</button>
-      <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
-      <pre>${JSON.stringify(nextObjects)}</pre>
-      <pre>${JSON.stringify(state)}</pre>
-    `;
-  }
-);
+const template = computedFn((state: ReturnType<typeof getState>) => {
+  const { today, _ } = state;
+  const { x = 0, y = 0 } = state;
+  // console.log({ today, p: (today as any)?.[PATH] });
 
-const updateState = (nextValue: JSONObject) => {
-  const nextSha = loadJSON(
-    stableStringify(
-      encodeObject({
-        ...nextValue,
-        $: rootHash.get(),
-        $$: new Date().toISOString(),
-      })
-    )
-  );
-  rootHash.set(nextSha);
-  sessionStorage.start = nextSha;
+  return html`
+    <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
+    <pre>paths: ${today && JSON.stringify((today as any)[PATH])}</pre>
+    <h1>${today?.year} ${today?._.year} ${x},${y}</h1>
+    <input
+      type="number"
+      value=${"" + today?.year}
+      @change=${(e: Event & { target: HTMLInputElement }) =>
+        today
+          ? (today._.year = e.target.valueAsNumber)
+          : console.log("no today")}
+    />
+    <button @click=${() => state._.x++}>${x}</button>
+    <pre>${JSON.stringify(state, null, 2)}</pre>
+    <pre>${JSON.stringify(state.__, null, 2)}</pre>
+  `;
+});
+
+const getState = () => open<rootState>(rootHash.get());
+
+const updateState = (nextValue: rootState) => {
+  // const nextSha = loadJSON(
+  //   stableStringify(
+  //     encodeObject({
+  //       ...nextValue,
+  //       $: rootHash.get(),
+  //       $$: new Date().toISOString(),
+  //     })
+  //   )
+  // );
+  // rootHash.set(nextSha);
+  // sessionStorage.start = nextSha;
 };
 
 autorun(function mainLoop() {
-  const state = open(rootHash.get(), updateState) as any;
-  render(template(state), document.getElementById("approot")!);
+  render(template(getState()), document.getElementById("approot")!);
 });
 
 console.log("started", Date.now());

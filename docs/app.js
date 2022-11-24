@@ -7066,6 +7066,35 @@ nano.put("body", {
   margin: "20px",
 });
 
+function dlv(obj, key, def, p, undef) {
+  key = key.split ? key.split(".") : key;
+  for (p = 0; p < key.length; p++) {
+    obj = obj ? obj[key[p]] : undef;
+  }
+  return obj === undef ? def : obj;
+}
+
+function dset(obj, keys, val) {
+  keys.split && (keys = keys.split("."));
+  var i = 0,
+    l = keys.length,
+    t = obj,
+    x,
+    k;
+  while (i < l) {
+    k = keys[i++];
+    if (k === "__proto__" || k === "constructor" || k === "prototype") break;
+    t = t[k] =
+      i === l
+        ? val
+        : typeof (x = t[k]) === typeof keys
+        ? x
+        : keys[i] * 0 !== 0 || !!~("" + keys[i]).indexOf(".")
+        ? {}
+        : [];
+  }
+}
+
 // See "precomputation" in notes
 var i = 18,
   j,
@@ -7155,6 +7184,19 @@ function sha256(b) {
   return s;
 }
 
+function _optionalChain$1(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+
+
+
+
+
+
+
+
+
+
+
+
 const stableStringify = (
   o,
   replacer
@@ -7181,7 +7223,7 @@ const stableStringify = (
 
 const knownObjects = observable({}) ;
 const requestedHashes = observable.set();
-const nextObjects = observable({}) ;
+observable({}) ;
 
 const loadJSON = action((encodedObjectString) => {
   const hash = sha256(encodedObjectString);
@@ -7192,51 +7234,52 @@ const loadJSON = action((encodedObjectString) => {
   return hash;
 });
 
-const encodeValue = (o) => {
+const encodeValue = (
+  o,
+  onObject
+) => {
   if (typeof o !== "object" || o === null) return o ;
-  if (Array.isArray(o)) return [o.map(encodeValue)];
+  if (Array.isArray(o)) return [o.map((i) => encodeValue(i, onObject))];
 
   const stringified = stableStringify(encodeObject(o));
   const hash = sha256(stringified);
-  if (!(hash in knownObjects))
-    runInAction(() => {
-      knownObjects[hash] = stringified;
-      requestedHashes.delete(hash);
-    });
+  _optionalChain$1([onObject, 'optionalCall', _2 => _2(hash, stringified)]);
+  // if (!(hash in knownObjects))
+  //   runInAction(() => {
+  //     knownObjects[hash] = stringified;
+  //     requestedHashes.delete(hash);
+  //   });
   return [hash];
 };
 
-const encodeObject = (o) =>
+const encodeObject = (
+  o,
+  onObject
+) =>
   Object.fromEntries(
-    Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v)])
+    Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v, onObject)])
   );
 
 const HASH = Symbol();
-const IS_PROXY = Symbol();
-const REGISTER_INVERSE = Symbol();
-const ON_NEXT = Symbol();
-const PATHS = Symbol();
-
-
-
-
-
-
-
-
-
-const isProxy = (u) =>
-  (typeof u === "object" && u && (u )[IS_PROXY]) || false;
+const SINGLETON = Symbol();
+const hashOfSingleton = (obj) =>
+  (typeof obj === "object" && obj && (obj )[HASH]) || null;
 
 const getSingleton = computedFn((hash) => {
+  console.log("getSingleton", hash);
   const source = Object.create(null) ;
   const onUnobserved = new Set([
     () => console.log("unobserve handlers " + hash),
   ]);
 
-  const atom = createAtom(`Node-${hash}`, undefined, () => {
-    for (const handler of onUnobserved) handler();
-  });
+  const atom = createAtom(
+    `Node-${hash}`,
+    () => console.log("observe " + hash),
+    () => {
+      for (const handler of onUnobserved) handler();
+      onUnobserved.clear();
+    }
+  );
 
   // Watch for data, once data is there, add it to the node
   if (!(hash in knownObjects)) {
@@ -7264,125 +7307,219 @@ const getSingleton = computedFn((hash) => {
     )
   );
 
-  return {
-    source: new Proxy(source, {
-      get(source, p) {
-        atom.reportObserved();
-        return Reflect.get(source, p);
-      },
-    }),
-    onUnobserved,
-  };
-});
-
-const decodeRef = computedFn((hash) => {
-  const { source, onUnobserved } = getSingleton(hash);
-
-  let onNext = undefined;
-
-  // nodes which point to this node with the exact properties
-  const referencedBy = new Map();
-  onUnobserved.add(() => referencedBy.clear());
-
-  // nodes this node points to
-  const references = new Set();
-  onUnobserved.add(() => {
-    // cleanup inverse references
-    for (const reference of references) reference[REGISTER_INVERSE](node);
-    references.clear();
+  const singleton = new Proxy(source, {
+    get(source, p) {
+      if (p === HASH) return hash;
+      if (p === SINGLETON) return singleton;
+      atom.reportObserved();
+      return decodeValue(Reflect.get(source, p));
+    },
   });
-
-  // Keep administration of nodes pointing to me
-  const registerInverse = (parent, key) => {
-    if (typeof key === "string") {
-      // register
-      if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
-      referencedBy.get(parent).add(key);
-    } else {
-      // unregister
-      referencedBy.delete(parent);
-    }
-  };
-
-  // Tells all known paths to this node
-  const paths = () => {
-    // return [[hash]];
-    const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
-      parent[PATHS].flatMap((path) =>
-        Array.from(keys).map((key) => path.concat(key))
-      )
-    );
-    return paths.length === 0 ? [[hash]] : paths;
-  };
-
-  const setOnNext = (handler) => {
-    onNext = handler;
-  };
-
-  let changes = {};
-
-  const node = new Proxy(source, {
-    get(source, k) {
-      if (typeof k === "symbol") {
-        if (k === HASH) return hash;
-        if (k === IS_PROXY) return true;
-        if (k === REGISTER_INVERSE) return registerInverse;
-        if (k === PATHS) return paths();
-        if (k === ON_NEXT) return setOnNext;
-        return Reflect.get(source, k);
-      }
-
-      const result = decodeValue(Reflect.get(source, k));
-
-      if (isProxy(result) && typeof k === "string") {
-        references.add(result);
-        result[REGISTER_INVERSE](node, k);
-      }
-
-      return result;
-    },
-    set(source, k, v) {
-      if (typeof k === "symbol") return false;
-
-      console.log("set", source, k, v);
-      changes[k] = v;
-      const nextNode = { ...node, ...changes };
-
-      if (onNext) {
-        onNext(nextNode);
-        return true;
-      }
-
-      let didPropagate = false;
-
-      for (const [reference, keys] of referencedBy) {
-        for (const key of keys) {
-          reference[key] = nextNode;
-          didPropagate = true;
-        }
-      }
-
-      return didPropagate;
-    },
-  }) ;
-
-  return node;
+  return singleton;
 });
 
 const decodeValue = computedFn((e) => {
   if (!Array.isArray(e)) return e;
   const item = e[0];
-  if (typeof item === "string") return decodeRef(item);
+  if (typeof item === "string") return getSingleton(item);
   return item.map((i) => decodeValue(i));
 });
 
-const open = computedFn(
-  (hash, onNext) => {
-    const value = decodeValue([hash]) ;
-    value[ON_NEXT](onNext);
-    return value;
+const PATH = Symbol();
+
+// const isProxy = (u: JSONValue): u is refProxy =>
+//   (typeof u === "object" && u && (u as any)[IS_PROXY]) || false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const openRoot = computedFn(
+  (rootHash) => {
+    const source = getSingleton(rootHash);
+    const stage = observable.box(undefined);
+
+    const node = computedFn(
+      (
+        singleton,
+        pathStr,
+        mutable
+      ) => {
+        const path = JSON.parse(pathStr); // path from root
+        return new Proxy(singleton, {
+          get(singleton, p) {
+            if (typeof p === "symbol") {
+              if (p === PATH) return path;
+              return Reflect.get(singleton, p);
+            }
+            if (p === "_") return node(singleton, pathStr, true);
+
+            const subpath = path.concat(p);
+
+            const own = Reflect.get(singleton, p);
+            const result = (mutable && dlv(stage.get() || {}, subpath)) || own;
+
+            if (hashOfSingleton(result)) {
+              return node(result, JSON.stringify(subpath), mutable);
+            }
+
+            return result;
+          },
+          set(singleton, p, v) {
+            if (!mutable) return false;
+            if (typeof p === "symbol") return false;
+            runInAction(() => {
+              const changes = stage.get() || encodeObject(source);
+
+              if (path.length > 0) {
+                let currentChange = dlv(changes, path);
+
+                if (
+                  typeof currentChange !== "object" ||
+                  currentChange == null ||
+                  Array.isArray(currentChange)
+                )
+                  currentChange = encodeObject(singleton);
+
+                // console.log("singleton", encodeObject(singleton));
+                dset(changes, path, {
+                  // ...encodeObject(singleton),
+                  ...currentChange,
+                  [p]: v,
+                });
+              } else {
+                (changes )[p] = v;
+              }
+
+              stage.set(changes);
+            });
+            return true;
+          },
+        }) ;
+      }
+    );
+
+    const root = new Proxy(node(source, JSON.stringify([]), false), {
+      get(source, p) {
+        if (p === "__") return stage.get(); //{ ...encodeObject(source), ...changes };
+        return Reflect.get(source, p);
+      },
+    }) ;
+
+    return root;
   }
 );
+
+// const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
+//   const { source, onUnobserved } = getSingleton(hash);
+
+//   let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
+
+//   // nodes which point to this node with the exact properties
+//   const referencedBy = new Map<refProxy, Set<string>>();
+//   onUnobserved.add(() => referencedBy.clear());
+
+//   // nodes this node points to
+//   const references = new Set<refProxy>();
+//   onUnobserved.add(() => {
+//     // cleanup inverse references
+//     for (const reference of references) reference[REGISTER_INVERSE](node);
+//     references.clear();
+//   });
+
+//   // Keep administration of nodes pointing to me
+//   const registerInverse = (parent: refProxy, key?: string) => {
+//     if (typeof key === "string") {
+//       // register
+//       if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
+//       referencedBy.get(parent)!.add(key);
+//     } else {
+//       // unregister
+//       referencedBy.delete(parent);
+//     }
+//   };
+
+//   // Tells all known paths to this node
+//   const paths = () => {
+//     // return [[hash]];
+//     const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
+//       parent[PATHS].flatMap((path) =>
+//         Array.from(keys).map((key) => path.concat(key))
+//       )
+//     );
+//     return paths.length === 0 ? [[hash]] : paths;
+//   };
+
+//   const setOnNext = (handler: (value: JSONObject) => void) => {
+//     onNext = handler;
+//   };
+
+//   let changes: Record<string, any> = {};
+
+//   const node = new Proxy(source, {
+//     get(source, k) {
+//       if (typeof k === "symbol") {
+//         if (k === HASH) return hash;
+//         if (k === IS_PROXY) return true;
+//         if (k === REGISTER_INVERSE) return registerInverse;
+//         if (k === PATHS) return paths();
+//         if (k === ON_NEXT) return setOnNext;
+//         return Reflect.get(source, k);
+//       }
+
+//       const result = decodeValue(Reflect.get(source, k));
+
+//       if (isProxy(result) && typeof k === "string") {
+//         references.add(result);
+//         result[REGISTER_INVERSE](node, k);
+//       }
+
+//       return result;
+//     },
+//     set(source, k, v) {
+//       if (typeof k === "symbol") return false;
+
+//       console.log("set", source, k, v);
+//       changes[k] = v;
+//       const nextNode = { ...node, ...changes };
+
+//       if (onNext) {
+//         onNext(nextNode);
+//         return true;
+//       }
+
+//       let didPropagate = false;
+
+//       for (const [reference, keys] of referencedBy) {
+//         for (const key of keys) {
+//           reference[key] = nextNode;
+//           didPropagate = true;
+//         }
+//       }
+
+//       return didPropagate;
+//     },
+//   }) as refProxy;
+
+//   return node;
+// });
+
+const open = computedFn((hash) => {
+  const value = openRoot(hash);
+  // value[ON_NEXT](onNext);
+  return value;
+});
 
 // export const decodeObject = (e: EncodedJSONObject): JSONObject =>
 //   Object.fromEntries(
@@ -7457,59 +7594,39 @@ const rootHash = observable.box(
     ))
 );
 
-const template = computedFn(
-  (state
 
 
 
-) => {
-    const { today } = state;
-    const { x = 0, y = 0 } = state;
 
-    return $`
-      <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
-      <pre>paths: ${today && JSON.stringify((today )[PATHS])}</pre>
-      <h1>${_optionalChain([today, 'optionalAccess', _ => _.year])} ${x},${y}</h1>
-      <input
-        type="number"
-        value=${"" + _optionalChain([today, 'optionalAccess', _2 => _2.year])}
-        @change=${(e) => (
-          console.log(
-            "change",
-            e.target.valueAsNumber,
-            typeof state.today,
-            state.today
-          ),
-          state.today
-            ? (state.today.year = e.target.valueAsNumber)
-            : console.log("no today")
-        )}
-      />
-      <button @click=${() => (state.x = x + 1)}>${x}</button>
-      <pre>${JSON.stringify(Array.from(requestedHashes))}</pre>
-      <pre>${JSON.stringify(nextObjects)}</pre>
-      <pre>${JSON.stringify(state)}</pre>
-    `;
-  }
-);
 
-const updateState = (nextValue) => {
-  const nextSha = loadJSON(
-    stableStringify(
-      encodeObject({
-        ...nextValue,
-        $: rootHash.get(),
-        $$: new Date().toISOString(),
-      })
-    )
-  );
-  rootHash.set(nextSha);
-  sessionStorage.start = nextSha;
-};
+
+const template = computedFn((state) => {
+  const { today, _ } = state;
+  const { x = 0, y = 0 } = state;
+  // console.log({ today, p: (today as any)?.[PATH] });
+
+  return $`
+    <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
+    <pre>paths: ${today && JSON.stringify((today )[PATH])}</pre>
+    <h1>${_optionalChain([today, 'optionalAccess', _2 => _2.year])} ${_optionalChain([today, 'optionalAccess', _3 => _3._, 'access', _4 => _4.year])} ${x},${y}</h1>
+    <input
+      type="number"
+      value=${"" + _optionalChain([today, 'optionalAccess', _5 => _5.year])}
+      @change=${(e) =>
+        today
+          ? (today._.year = e.target.valueAsNumber)
+          : console.log("no today")}
+    />
+    <button @click=${() => state._.x++}>${x}</button>
+    <pre>${JSON.stringify(state, null, 2)}</pre>
+    <pre>${JSON.stringify(state.__, null, 2)}</pre>
+  `;
+});
+
+const getState = () => open(rootHash.get());
 
 autorun(function mainLoop() {
-  const state = open(rootHash.get(), updateState) ;
-  x(template(state), document.getElementById("approot"));
+  x(template(getState()), document.getElementById("approot"));
 });
 
 console.log("started", Date.now());
