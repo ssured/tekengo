@@ -8,8 +8,8 @@ type JSONPrimitive = null | string | number | boolean;
 type JSONObject = { [k: string]: JSONValue };
 type JSONArray = JSONValue[];
 type JSONValue = JSONPrimitive | JSONArray | JSONObject;
-type EncodedJSONObjectRef = [string];
-type EncodedJSONArray = [EncodedJSON[]];
+type EncodedJSONObjectRef = { "": string };
+type EncodedJSONArray = EncodedJSON[];
 type EncodedJSON = JSONPrimitive | EncodedJSONObjectRef | EncodedJSONArray;
 type EncodedJSONObject = {
   [key: string]: EncodedJSON;
@@ -43,34 +43,36 @@ export const knownObjects = observable({}) as Record<string, string>;
 export const requestedHashes = observable.set<string>();
 export const nextObjects = observable({}) as Record<string, string>;
 
-export const loadJSON = action((encodedObjectString: string) => {
-  const hash = sha256(encodedObjectString);
-  runInAction(() => {
-    knownObjects[hash] = encodedObjectString;
+export const loadJSON = action((encodedObjectOrString: string | JSONObject) => {
+  const encodedObject =
+    typeof encodedObjectOrString === "string"
+      ? JSON.parse(encodedObjectOrString)
+      : encodedObjectOrString;
+  const { "": hash } = encodeValue(encodedObject, (hash, stringified) => {
+    knownObjects[hash] = stringified;
     requestedHashes.delete(hash);
-  });
+  }) as EncodedJSONObjectRef;
   return hash;
 });
 
-const encodeValue = (
+const isRef = (o: JSONObject): o is EncodedJSONObjectRef =>
+  Object.keys(o).length === 1 && "" in o;
+
+export const encodeValue = (
   o: JSONValue,
   onObject?: (hash: string, stringified: string) => void
 ): EncodedJSON => {
   if (typeof o !== "object" || o === null) return o as any;
-  if (Array.isArray(o)) return [o.map((i) => encodeValue(i, onObject))];
+  if (Array.isArray(o)) return o.map((i) => encodeValue(i, onObject));
+  if (isRef(o)) return o;
 
-  const stringified = stableStringify(encodeObject(o));
+  const stringified = stableStringify(encodeObject(o, onObject));
   const hash = sha256(stringified);
   onObject?.(hash, stringified);
-  // if (!(hash in knownObjects))
-  //   runInAction(() => {
-  //     knownObjects[hash] = stringified;
-  //     requestedHashes.delete(hash);
-  //   });
-  return [hash];
+  return { "": hash };
 };
 
-export const encodeObject = (
+const encodeObject = (
   o: JSONObject,
   onObject?: (hash: string, stringified: string) => void
 ): EncodedJSONObject =>
@@ -83,7 +85,7 @@ const SINGLETON = Symbol();
 const hashOfSingleton = (obj: unknown): string | null =>
   (typeof obj === "object" && obj && (obj as any)[HASH]) || null;
 
-const getSingleton = computedFn((hash: EncodedJSONObjectRef[0]) => {
+const getSingleton = computedFn((hash: EncodedJSONObjectRef[""]) => {
   console.log("getSingleton", hash);
   const source = Object.create(null) as JSONObject;
   const onUnobserved = new Set<() => void>([
@@ -117,8 +119,7 @@ const getSingleton = computedFn((hash: EncodedJSONObjectRef[0]) => {
             r.dispose();
           }
         } catch (e) {
-          console.error("could not parse " + stringified);
-          return undefined;
+          return console.error("could not parse " + stringified);
         }
       },
       { fireImmediately: true }
@@ -137,10 +138,10 @@ const getSingleton = computedFn((hash: EncodedJSONObjectRef[0]) => {
 });
 
 const decodeValue = computedFn((e: EncodedJSON): JSONValue => {
-  if (!Array.isArray(e)) return e;
-  const item = e[0];
-  if (typeof item === "string") return getSingleton(item);
-  return item.map((i) => decodeValue(i));
+  if (typeof e !== "object" || e == null) return e;
+  if (Array.isArray(e)) return e.map(decodeValue);
+  if (isRef(e)) return getSingleton(e[""]);
+  throw new Error("decode invalid object");
 });
 
 export const PATH = Symbol();
@@ -160,11 +161,11 @@ type deepNode<T extends JSONObject> = {
   [PATH]: string[];
 };
 type rootNode<T extends JSONObject> = deepNode<T> & {
-  readonly __: Partial<T>;
+  readonly __: T;
 };
 
 const openRoot = computedFn(
-  <T extends JSONObject>(rootHash: EncodedJSONObjectRef[0]): rootNode<T> => {
+  <T extends JSONObject>(rootHash: EncodedJSONObjectRef[""]): rootNode<T> => {
     const source = getSingleton(rootHash);
     const stage = observable.box<EncodedJSONObject | T | undefined>(undefined);
 
@@ -206,7 +207,8 @@ const openRoot = computedFn(
                 if (
                   typeof currentChange !== "object" ||
                   currentChange == null ||
-                  Array.isArray(currentChange)
+                  Array.isArray(currentChange) ||
+                  isRef(currentChange)
                 )
                   currentChange = encodeObject(singleton);
 

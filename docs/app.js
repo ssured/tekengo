@@ -6906,6 +6906,468 @@ function computedFn(fn, keepAliveOrOptions) {
     };
 }
 
+function dlv(obj, key, def, p, undef) {
+  key = key.split ? key.split(".") : key;
+  for (p = 0; p < key.length; p++) {
+    obj = obj ? obj[key[p]] : undef;
+  }
+  return obj === undef ? def : obj;
+}
+
+function dset(obj, keys, val) {
+  keys.split && (keys = keys.split("."));
+  var i = 0,
+    l = keys.length,
+    t = obj,
+    x,
+    k;
+  while (i < l) {
+    k = keys[i++];
+    if (k === "__proto__" || k === "constructor" || k === "prototype") break;
+    t = t[k] =
+      i === l
+        ? val
+        : typeof (x = t[k]) === typeof keys
+        ? x
+        : keys[i] * 0 !== 0 || !!~("" + keys[i]).indexOf(".")
+        ? {}
+        : [];
+  }
+}
+
+// See "precomputation" in notes
+var i = 18,
+  j,
+  K = [],
+  H = [];
+
+// Construct list of primes < 320
+// K[x] === 1 if x is composite, unset if prime
+for (; i > 1; i--) {
+  for (j = i; j < 320; ) {
+    K[(j += i)] = 1;
+  }
+}
+
+// See "`a` reassignment" in notes
+function a(num, root) {
+  return (Math.pow(num, 1 / root) /* % 1 */ * 4294967296) | 0;
+}
+
+// i === 1
+for (j = 0; j < 64; ) {
+  if (!K[++i]) {
+    H[j] = a(i, 2);
+    K[j++] = a(i, 3);
+  }
+}
+
+function S(X, n) {
+  return (X >>> n) | (X << -n);
+}
+
+function sha256(b) {
+  var h = H.slice((i = j = 0), 8),
+    words = [],
+    s = unescape(encodeURI(b)) + "\x80",
+    W = s.length;
+
+  // See "Length bits" in notes
+  words[(b = (--W / 4 + 2) | 15)] = W * 8;
+
+  for (; ~W; ) {
+    // W !== -1
+    words[W >> 2] |= s.charCodeAt(W) << (8 * ~W--);
+    // words[W >> 2] |= s.charCodeAt(W) << 24 - 8 * W--;
+  }
+
+  for (W = []; i < b; i += 16) {
+    // See "`a` reassignment" in notes
+    a = h.slice();
+
+    for (
+      ;
+      j < 64;
+      a.unshift(
+        s +
+          (S((s = a[0]), 2) ^ S(s, 13) ^ S(s, 22)) +
+          ((s & a[1]) ^ (a[1] & a[2]) ^ (a[2] & s))
+      )
+    ) {
+      a[3] += s =
+        0 |
+        ((W[j] =
+          j < 16
+            ? ~~words[j + i]
+            : (S((s = W[j - 2]), 17) ^ S(s, 19) ^ (s >>> 10)) +
+              W[j - 7] +
+              (S((s = W[j - 15]), 7) ^ S(s, 18) ^ (s >>> 3)) +
+              W[j - 16]) +
+          a.pop() +
+          (S((s = a[4]), 6) ^ S(s, 11) ^ S(s, 25)) +
+          ((s & a[5]) ^ (~s & a[6])) +
+          K[j++]);
+    }
+
+    // See "Integer safety" in notes
+    for (j = 8; j; ) h[--j] += a[j];
+
+    // j === 0
+  }
+
+  for (s = ""; j < 64; ) {
+    // s += ((h[j >> 3] >> 4 * ~j++) & 15).toString(16);
+    s += ((h[j >> 3] >> (4 * (7 - j++))) & 15).toString(16);
+    // s += ((h[j >> 3] >> -4 * ++j) & 15).toString(16);
+  }
+
+  return s;
+}
+
+function _optionalChain$1(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+
+
+
+
+
+
+
+
+
+
+
+
+const stableStringify = (
+  o,
+  replacer
+
+,
+  space
+) =>
+  JSON.stringify(
+    Object.fromEntries(
+      Array.from(Object.entries(o))
+        .sort(([a], [b]) => (a > b ? 1 : -1))
+        .map(([k, v]) => [
+          k,
+          typeof v === "object" && v && !Array.isArray(v)
+            ? JSON.parse(stableStringify(v, replacer, space))
+            : v,
+        ])
+    ),
+    replacer,
+    space
+  );
+
+// console.log("str", stableStringify({ b: { d: "D", c: "C" }, a: "A" })); // str {"a":"A","b":{"c":"C","d":"D"}}
+
+const knownObjects = observable({}) ;
+const requestedHashes = observable.set();
+observable({}) ;
+
+const loadJSON = action((encodedObjectOrString) => {
+  const encodedObject =
+    typeof encodedObjectOrString === "string"
+      ? JSON.parse(encodedObjectOrString)
+      : encodedObjectOrString;
+  const { "": hash } = encodeValue(encodedObject, (hash, stringified) => {
+    knownObjects[hash] = stringified;
+    requestedHashes.delete(hash);
+  }) ;
+  return hash;
+});
+
+const isRef = (o) =>
+  Object.keys(o).length === 1 && "" in o;
+
+const encodeValue = (
+  o,
+  onObject
+) => {
+  if (typeof o !== "object" || o === null) return o ;
+  if (Array.isArray(o)) return o.map((i) => encodeValue(i, onObject));
+  if (isRef(o)) return o;
+
+  const stringified = stableStringify(encodeObject(o, onObject));
+  const hash = sha256(stringified);
+  _optionalChain$1([onObject, 'optionalCall', _2 => _2(hash, stringified)]);
+  return { "": hash };
+};
+
+const encodeObject = (
+  o,
+  onObject
+) =>
+  Object.fromEntries(
+    Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v, onObject)])
+  );
+
+const HASH = Symbol();
+const SINGLETON = Symbol();
+const hashOfSingleton = (obj) =>
+  (typeof obj === "object" && obj && (obj )[HASH]) || null;
+
+const getSingleton = computedFn((hash) => {
+  console.log("getSingleton", hash);
+  const source = Object.create(null) ;
+  const onUnobserved = new Set([
+    () => console.log("unobserve handlers " + hash),
+  ]);
+
+  const atom = createAtom(
+    `Node-${hash}`,
+    () => console.log("observe " + hash),
+    () => {
+      for (const handler of onUnobserved) handler();
+      onUnobserved.clear();
+    }
+  );
+
+  // Watch for data, once data is there, add it to the node
+  if (!(hash in knownObjects)) {
+    runInAction(() => requestedHashes.add(hash));
+  }
+  onUnobserved.add(
+    reaction(
+      () => knownObjects[hash],
+      (stringified, _prev, r) => {
+        if (!stringified) return;
+        if (sha256(stringified) !== hash) return console.error("invalid hash");
+        try {
+          const value = JSON.parse(stringified);
+          if (typeof value === "object" && value && !Array.isArray(value)) {
+            Object.assign(source, value);
+            atom.reportChanged();
+            r.dispose();
+          }
+        } catch (e) {
+          return console.error("could not parse " + stringified);
+        }
+      },
+      { fireImmediately: true }
+    )
+  );
+
+  const singleton = new Proxy(source, {
+    get(source, p) {
+      if (p === HASH) return hash;
+      if (p === SINGLETON) return singleton;
+      atom.reportObserved();
+      return decodeValue(Reflect.get(source, p));
+    },
+  });
+  return singleton;
+});
+
+const decodeValue = computedFn((e) => {
+  if (typeof e !== "object" || e == null) return e;
+  if (Array.isArray(e)) return e.map(decodeValue);
+  if (isRef(e)) return getSingleton(e[""]);
+  throw new Error("decode invalid object");
+});
+
+const PATH = Symbol();
+
+// const isProxy = (u: JSONValue): u is refProxy =>
+//   (typeof u === "object" && u && (u as any)[IS_PROXY]) || false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const openRoot = computedFn(
+  (rootHash) => {
+    const source = getSingleton(rootHash);
+    const stage = observable.box(undefined);
+
+    const node = computedFn(
+      (
+        singleton,
+        pathStr,
+        mutable
+      ) => {
+        const path = JSON.parse(pathStr); // path from root
+        return new Proxy(singleton, {
+          get(singleton, p) {
+            if (typeof p === "symbol") {
+              if (p === PATH) return path;
+              return Reflect.get(singleton, p);
+            }
+            if (p === "_") return node(singleton, pathStr, true);
+
+            const subpath = path.concat(p);
+
+            const own = Reflect.get(singleton, p);
+            const result = (mutable && dlv(stage.get() || {}, subpath)) || own;
+
+            if (hashOfSingleton(result)) {
+              return node(result, JSON.stringify(subpath), mutable);
+            }
+
+            return result;
+          },
+          set(singleton, p, v) {
+            if (!mutable) return false;
+            if (typeof p === "symbol") return false;
+            runInAction(() => {
+              const changes = stage.get() || encodeObject(source);
+
+              if (path.length > 0) {
+                let currentChange = dlv(changes, path);
+
+                if (
+                  typeof currentChange !== "object" ||
+                  currentChange == null ||
+                  Array.isArray(currentChange) ||
+                  isRef(currentChange)
+                )
+                  currentChange = encodeObject(singleton);
+
+                // console.log("singleton", encodeObject(singleton));
+                dset(changes, path, {
+                  // ...encodeObject(singleton),
+                  ...currentChange,
+                  [p]: v,
+                });
+              } else {
+                (changes )[p] = v;
+              }
+
+              stage.set(changes);
+            });
+            return true;
+          },
+        }) ;
+      }
+    );
+
+    const root = new Proxy(node(source, JSON.stringify([]), false), {
+      get(source, p) {
+        if (p === "__") return stage.get(); //{ ...encodeObject(source), ...changes };
+        return Reflect.get(source, p);
+      },
+    }) ;
+
+    return root;
+  }
+);
+
+// const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
+//   const { source, onUnobserved } = getSingleton(hash);
+
+//   let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
+
+//   // nodes which point to this node with the exact properties
+//   const referencedBy = new Map<refProxy, Set<string>>();
+//   onUnobserved.add(() => referencedBy.clear());
+
+//   // nodes this node points to
+//   const references = new Set<refProxy>();
+//   onUnobserved.add(() => {
+//     // cleanup inverse references
+//     for (const reference of references) reference[REGISTER_INVERSE](node);
+//     references.clear();
+//   });
+
+//   // Keep administration of nodes pointing to me
+//   const registerInverse = (parent: refProxy, key?: string) => {
+//     if (typeof key === "string") {
+//       // register
+//       if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
+//       referencedBy.get(parent)!.add(key);
+//     } else {
+//       // unregister
+//       referencedBy.delete(parent);
+//     }
+//   };
+
+//   // Tells all known paths to this node
+//   const paths = () => {
+//     // return [[hash]];
+//     const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
+//       parent[PATHS].flatMap((path) =>
+//         Array.from(keys).map((key) => path.concat(key))
+//       )
+//     );
+//     return paths.length === 0 ? [[hash]] : paths;
+//   };
+
+//   const setOnNext = (handler: (value: JSONObject) => void) => {
+//     onNext = handler;
+//   };
+
+//   let changes: Record<string, any> = {};
+
+//   const node = new Proxy(source, {
+//     get(source, k) {
+//       if (typeof k === "symbol") {
+//         if (k === HASH) return hash;
+//         if (k === IS_PROXY) return true;
+//         if (k === REGISTER_INVERSE) return registerInverse;
+//         if (k === PATHS) return paths();
+//         if (k === ON_NEXT) return setOnNext;
+//         return Reflect.get(source, k);
+//       }
+
+//       const result = decodeValue(Reflect.get(source, k));
+
+//       if (isProxy(result) && typeof k === "string") {
+//         references.add(result);
+//         result[REGISTER_INVERSE](node, k);
+//       }
+
+//       return result;
+//     },
+//     set(source, k, v) {
+//       if (typeof k === "symbol") return false;
+
+//       console.log("set", source, k, v);
+//       changes[k] = v;
+//       const nextNode = { ...node, ...changes };
+
+//       if (onNext) {
+//         onNext(nextNode);
+//         return true;
+//       }
+
+//       let didPropagate = false;
+
+//       for (const [reference, keys] of referencedBy) {
+//         for (const key of keys) {
+//           reference[key] = nextNode;
+//           didPropagate = true;
+//         }
+//       }
+
+//       return didPropagate;
+//     },
+//   }) as refProxy;
+
+//   return node;
+// });
+
+const open = computedFn((hash) => {
+  const value = openRoot(hash);
+  // value[ON_NEXT](onNext);
+  return value;
+});
+
+// export const decodeObject = (e: EncodedJSONObject): JSONObject =>
+//   Object.fromEntries(
+//     Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
+//   );
+
 var KEBAB_REGEX = /[A-Z]/g;
 
 var hash = function (str) {
@@ -7066,468 +7528,7 @@ nano.put("body", {
   margin: "20px",
 });
 
-function dlv(obj, key, def, p, undef) {
-  key = key.split ? key.split(".") : key;
-  for (p = 0; p < key.length; p++) {
-    obj = obj ? obj[key[p]] : undef;
-  }
-  return obj === undef ? def : obj;
-}
-
-function dset(obj, keys, val) {
-  keys.split && (keys = keys.split("."));
-  var i = 0,
-    l = keys.length,
-    t = obj,
-    x,
-    k;
-  while (i < l) {
-    k = keys[i++];
-    if (k === "__proto__" || k === "constructor" || k === "prototype") break;
-    t = t[k] =
-      i === l
-        ? val
-        : typeof (x = t[k]) === typeof keys
-        ? x
-        : keys[i] * 0 !== 0 || !!~("" + keys[i]).indexOf(".")
-        ? {}
-        : [];
-  }
-}
-
-// See "precomputation" in notes
-var i = 18,
-  j,
-  K = [],
-  H = [];
-
-// Construct list of primes < 320
-// K[x] === 1 if x is composite, unset if prime
-for (; i > 1; i--) {
-  for (j = i; j < 320; ) {
-    K[(j += i)] = 1;
-  }
-}
-
-// See "`a` reassignment" in notes
-function a(num, root) {
-  return (Math.pow(num, 1 / root) /* % 1 */ * 4294967296) | 0;
-}
-
-// i === 1
-for (j = 0; j < 64; ) {
-  if (!K[++i]) {
-    H[j] = a(i, 2);
-    K[j++] = a(i, 3);
-  }
-}
-
-function S(X, n) {
-  return (X >>> n) | (X << -n);
-}
-
-function sha256(b) {
-  var h = H.slice((i = j = 0), 8),
-    words = [],
-    s = unescape(encodeURI(b)) + "\x80",
-    W = s.length;
-
-  // See "Length bits" in notes
-  words[(b = (--W / 4 + 2) | 15)] = W * 8;
-
-  for (; ~W; ) {
-    // W !== -1
-    words[W >> 2] |= s.charCodeAt(W) << (8 * ~W--);
-    // words[W >> 2] |= s.charCodeAt(W) << 24 - 8 * W--;
-  }
-
-  for (W = []; i < b; i += 16) {
-    // See "`a` reassignment" in notes
-    a = h.slice();
-
-    for (
-      ;
-      j < 64;
-      a.unshift(
-        s +
-          (S((s = a[0]), 2) ^ S(s, 13) ^ S(s, 22)) +
-          ((s & a[1]) ^ (a[1] & a[2]) ^ (a[2] & s))
-      )
-    ) {
-      a[3] += s =
-        0 |
-        ((W[j] =
-          j < 16
-            ? ~~words[j + i]
-            : (S((s = W[j - 2]), 17) ^ S(s, 19) ^ (s >>> 10)) +
-              W[j - 7] +
-              (S((s = W[j - 15]), 7) ^ S(s, 18) ^ (s >>> 3)) +
-              W[j - 16]) +
-          a.pop() +
-          (S((s = a[4]), 6) ^ S(s, 11) ^ S(s, 25)) +
-          ((s & a[5]) ^ (~s & a[6])) +
-          K[j++]);
-    }
-
-    // See "Integer safety" in notes
-    for (j = 8; j; ) h[--j] += a[j];
-
-    // j === 0
-  }
-
-  for (s = ""; j < 64; ) {
-    // s += ((h[j >> 3] >> 4 * ~j++) & 15).toString(16);
-    s += ((h[j >> 3] >> (4 * (7 - j++))) & 15).toString(16);
-    // s += ((h[j >> 3] >> -4 * ++j) & 15).toString(16);
-  }
-
-  return s;
-}
-
-function _optionalChain$1(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
-
-
-
-
-
-
-
-
-
-
-
-
-const stableStringify = (
-  o,
-  replacer
-
-,
-  space
-) =>
-  JSON.stringify(
-    Object.fromEntries(
-      Array.from(Object.entries(o))
-        .sort(([a], [b]) => (a > b ? 1 : -1))
-        .map(([k, v]) => [
-          k,
-          typeof v === "object" && v && !Array.isArray(v)
-            ? JSON.parse(stableStringify(v, replacer, space))
-            : v,
-        ])
-    ),
-    replacer,
-    space
-  );
-
-// console.log("str", stableStringify({ b: { d: "D", c: "C" }, a: "A" })); // str {"a":"A","b":{"c":"C","d":"D"}}
-
-const knownObjects = observable({}) ;
-const requestedHashes = observable.set();
-observable({}) ;
-
-const loadJSON = action((encodedObjectString) => {
-  const hash = sha256(encodedObjectString);
-  runInAction(() => {
-    knownObjects[hash] = encodedObjectString;
-    requestedHashes.delete(hash);
-  });
-  return hash;
-});
-
-const encodeValue = (
-  o,
-  onObject
-) => {
-  if (typeof o !== "object" || o === null) return o ;
-  if (Array.isArray(o)) return [o.map((i) => encodeValue(i, onObject))];
-
-  const stringified = stableStringify(encodeObject(o));
-  const hash = sha256(stringified);
-  _optionalChain$1([onObject, 'optionalCall', _2 => _2(hash, stringified)]);
-  // if (!(hash in knownObjects))
-  //   runInAction(() => {
-  //     knownObjects[hash] = stringified;
-  //     requestedHashes.delete(hash);
-  //   });
-  return [hash];
-};
-
-const encodeObject = (
-  o,
-  onObject
-) =>
-  Object.fromEntries(
-    Array.from(Object.entries(o)).map(([k, v]) => [k, encodeValue(v, onObject)])
-  );
-
-const HASH = Symbol();
-const SINGLETON = Symbol();
-const hashOfSingleton = (obj) =>
-  (typeof obj === "object" && obj && (obj )[HASH]) || null;
-
-const getSingleton = computedFn((hash) => {
-  console.log("getSingleton", hash);
-  const source = Object.create(null) ;
-  const onUnobserved = new Set([
-    () => console.log("unobserve handlers " + hash),
-  ]);
-
-  const atom = createAtom(
-    `Node-${hash}`,
-    () => console.log("observe " + hash),
-    () => {
-      for (const handler of onUnobserved) handler();
-      onUnobserved.clear();
-    }
-  );
-
-  // Watch for data, once data is there, add it to the node
-  if (!(hash in knownObjects)) {
-    runInAction(() => requestedHashes.add(hash));
-  }
-  onUnobserved.add(
-    reaction(
-      () => knownObjects[hash],
-      (stringified, _prev, r) => {
-        if (!stringified) return;
-        if (sha256(stringified) !== hash) return console.error("invalid hash");
-        try {
-          const value = JSON.parse(stringified);
-          if (typeof value === "object" && value && !Array.isArray(value)) {
-            Object.assign(source, value);
-            atom.reportChanged();
-            r.dispose();
-          }
-        } catch (e) {
-          console.error("could not parse " + stringified);
-          return undefined;
-        }
-      },
-      { fireImmediately: true }
-    )
-  );
-
-  const singleton = new Proxy(source, {
-    get(source, p) {
-      if (p === HASH) return hash;
-      if (p === SINGLETON) return singleton;
-      atom.reportObserved();
-      return decodeValue(Reflect.get(source, p));
-    },
-  });
-  return singleton;
-});
-
-const decodeValue = computedFn((e) => {
-  if (!Array.isArray(e)) return e;
-  const item = e[0];
-  if (typeof item === "string") return getSingleton(item);
-  return item.map((i) => decodeValue(i));
-});
-
-const PATH = Symbol();
-
-// const isProxy = (u: JSONValue): u is refProxy =>
-//   (typeof u === "object" && u && (u as any)[IS_PROXY]) || false;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const openRoot = computedFn(
-  (rootHash) => {
-    const source = getSingleton(rootHash);
-    const stage = observable.box(undefined);
-
-    const node = computedFn(
-      (
-        singleton,
-        pathStr,
-        mutable
-      ) => {
-        const path = JSON.parse(pathStr); // path from root
-        return new Proxy(singleton, {
-          get(singleton, p) {
-            if (typeof p === "symbol") {
-              if (p === PATH) return path;
-              return Reflect.get(singleton, p);
-            }
-            if (p === "_") return node(singleton, pathStr, true);
-
-            const subpath = path.concat(p);
-
-            const own = Reflect.get(singleton, p);
-            const result = (mutable && dlv(stage.get() || {}, subpath)) || own;
-
-            if (hashOfSingleton(result)) {
-              return node(result, JSON.stringify(subpath), mutable);
-            }
-
-            return result;
-          },
-          set(singleton, p, v) {
-            if (!mutable) return false;
-            if (typeof p === "symbol") return false;
-            runInAction(() => {
-              const changes = stage.get() || encodeObject(source);
-
-              if (path.length > 0) {
-                let currentChange = dlv(changes, path);
-
-                if (
-                  typeof currentChange !== "object" ||
-                  currentChange == null ||
-                  Array.isArray(currentChange)
-                )
-                  currentChange = encodeObject(singleton);
-
-                // console.log("singleton", encodeObject(singleton));
-                dset(changes, path, {
-                  // ...encodeObject(singleton),
-                  ...currentChange,
-                  [p]: v,
-                });
-              } else {
-                (changes )[p] = v;
-              }
-
-              stage.set(changes);
-            });
-            return true;
-          },
-        }) ;
-      }
-    );
-
-    const root = new Proxy(node(source, JSON.stringify([]), false), {
-      get(source, p) {
-        if (p === "__") return stage.get(); //{ ...encodeObject(source), ...changes };
-        return Reflect.get(source, p);
-      },
-    }) ;
-
-    return root;
-  }
-);
-
-// const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
-//   const { source, onUnobserved } = getSingleton(hash);
-
-//   let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
-
-//   // nodes which point to this node with the exact properties
-//   const referencedBy = new Map<refProxy, Set<string>>();
-//   onUnobserved.add(() => referencedBy.clear());
-
-//   // nodes this node points to
-//   const references = new Set<refProxy>();
-//   onUnobserved.add(() => {
-//     // cleanup inverse references
-//     for (const reference of references) reference[REGISTER_INVERSE](node);
-//     references.clear();
-//   });
-
-//   // Keep administration of nodes pointing to me
-//   const registerInverse = (parent: refProxy, key?: string) => {
-//     if (typeof key === "string") {
-//       // register
-//       if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
-//       referencedBy.get(parent)!.add(key);
-//     } else {
-//       // unregister
-//       referencedBy.delete(parent);
-//     }
-//   };
-
-//   // Tells all known paths to this node
-//   const paths = () => {
-//     // return [[hash]];
-//     const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
-//       parent[PATHS].flatMap((path) =>
-//         Array.from(keys).map((key) => path.concat(key))
-//       )
-//     );
-//     return paths.length === 0 ? [[hash]] : paths;
-//   };
-
-//   const setOnNext = (handler: (value: JSONObject) => void) => {
-//     onNext = handler;
-//   };
-
-//   let changes: Record<string, any> = {};
-
-//   const node = new Proxy(source, {
-//     get(source, k) {
-//       if (typeof k === "symbol") {
-//         if (k === HASH) return hash;
-//         if (k === IS_PROXY) return true;
-//         if (k === REGISTER_INVERSE) return registerInverse;
-//         if (k === PATHS) return paths();
-//         if (k === ON_NEXT) return setOnNext;
-//         return Reflect.get(source, k);
-//       }
-
-//       const result = decodeValue(Reflect.get(source, k));
-
-//       if (isProxy(result) && typeof k === "string") {
-//         references.add(result);
-//         result[REGISTER_INVERSE](node, k);
-//       }
-
-//       return result;
-//     },
-//     set(source, k, v) {
-//       if (typeof k === "symbol") return false;
-
-//       console.log("set", source, k, v);
-//       changes[k] = v;
-//       const nextNode = { ...node, ...changes };
-
-//       if (onNext) {
-//         onNext(nextNode);
-//         return true;
-//       }
-
-//       let didPropagate = false;
-
-//       for (const [reference, keys] of referencedBy) {
-//         for (const key of keys) {
-//           reference[key] = nextNode;
-//           didPropagate = true;
-//         }
-//       }
-
-//       return didPropagate;
-//     },
-//   }) as refProxy;
-
-//   return node;
-// });
-
-const open = computedFn((hash) => {
-  const value = openRoot(hash);
-  // value[ON_NEXT](onNext);
-  return value;
-});
-
-// export const decodeObject = (e: EncodedJSONObject): JSONObject =>
-//   Object.fromEntries(
-//     Array.from(Object.entries(e)).map(([k, v]) => [k, decodeValue(v)])
-//   );
-
 function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
-
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
 
 const sendMessage = new Promise((res) => {
@@ -7578,20 +7579,17 @@ observe(requestedHashes, (change) => {
 // const stringify = (o: JSONObject): string => stableStringify(encodeObject(o));
 
 const rootHash = observable.box(
-  sessionStorage.start ||
-    (sessionStorage.start = loadJSON(
-      stableStringify(
-        encodeObject({
-          today: {
-            year: new Date().getFullYear(),
-            month: new Date().getMonth() + 1,
-            day: new Date().getDate(),
-          },
-          x: 0,
-          y: 0,
-        })
-      )
-    ))
+  sessionStorage.start
+  // ||
+  //   (sessionStorage.start = loadJSON({
+  //     today: {
+  //       year: new Date().getFullYear(),
+  //       month: new Date().getMonth() + 1,
+  //       day: new Date().getDate(),
+  //     },
+  //     x: 0,
+  //     y: 0,
+  //   }))
 );
 
 
@@ -7620,10 +7618,28 @@ const template = computedFn((state) => {
     <button @click=${() => state._.x++}>${x}</button>
     <pre>${JSON.stringify(state, null, 2)}</pre>
     <pre>${JSON.stringify(state.__, null, 2)}</pre>
+    <pre>${JSON.stringify(encodeValue(state.__), null, 2)}</pre>
+    <button
+      @click=${() => state.__ && updateState(state.__)}
+      ?disabled=${!state.__}
+    >
+      SAVE STATE
+    </button>
   `;
 });
 
 const getState = () => open(rootHash.get());
+
+const updateState = action((nextValue) => {
+  const nextSha = loadJSON({
+    ...nextValue,
+    prev: rootHash.get(),
+    date: new Date().toISOString(),
+    author: "Sjoerd",
+  });
+  rootHash.set(nextSha);
+  sessionStorage.start = nextSha;
+});
 
 autorun(function mainLoop() {
   x(template(getState()), document.getElementById("approot"));

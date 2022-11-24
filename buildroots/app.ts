@@ -1,19 +1,16 @@
 import { html, render } from "lit-html";
-import { action, computed, autorun, observable, observe } from "mobx";
+import { action, autorun, observable, observe } from "mobx";
 import { computedFn } from "mobx-utils";
-import "../styling";
 import {
-  encodeObject,
   knownObjects,
   loadJSON,
   open,
-  requestedHashes,
-  stableStringify,
-  nextObjects,
   PATH,
+  requestedHashes,
+  encodeValue,
 } from "../merkledag";
+import "../styling";
 import { sha256 } from "../utils/sha256";
-import { JSONObject } from "../utils/hash";
 
 const ws = new WebSocket("ws://" + location.hostname + ":8788");
 
@@ -65,20 +62,17 @@ observe(requestedHashes, (change) => {
 // const stringify = (o: JSONObject): string => stableStringify(encodeObject(o));
 
 const rootHash = observable.box(
-  sessionStorage.start ||
-    (sessionStorage.start = loadJSON(
-      stableStringify(
-        encodeObject({
-          today: {
-            year: new Date().getFullYear(),
-            month: new Date().getMonth() + 1,
-            day: new Date().getDate(),
-          },
-          x: 0,
-          y: 0,
-        })
-      )
-    ))
+  sessionStorage.start
+  // ||
+  //   (sessionStorage.start = loadJSON({
+  //     today: {
+  //       year: new Date().getFullYear(),
+  //       month: new Date().getMonth() + 1,
+  //       day: new Date().getDate(),
+  //     },
+  //     x: 0,
+  //     y: 0,
+  //   }))
 );
 
 type rootState = {
@@ -107,24 +101,28 @@ const template = computedFn((state: ReturnType<typeof getState>) => {
     <button @click=${() => state._.x++}>${x}</button>
     <pre>${JSON.stringify(state, null, 2)}</pre>
     <pre>${JSON.stringify(state.__, null, 2)}</pre>
+    <pre>${JSON.stringify(encodeValue(state.__), null, 2)}</pre>
+    <button
+      @click=${() => state.__ && updateState(state.__)}
+      ?disabled=${!state.__}
+    >
+      SAVE STATE
+    </button>
   `;
 });
 
 const getState = () => open<rootState>(rootHash.get());
 
-const updateState = (nextValue: rootState) => {
-  // const nextSha = loadJSON(
-  //   stableStringify(
-  //     encodeObject({
-  //       ...nextValue,
-  //       $: rootHash.get(),
-  //       $$: new Date().toISOString(),
-  //     })
-  //   )
-  // );
-  // rootHash.set(nextSha);
-  // sessionStorage.start = nextSha;
-};
+const updateState = action((nextValue: rootState) => {
+  const nextSha = loadJSON({
+    ...nextValue,
+    prev: rootHash.get(),
+    date: new Date().toISOString(),
+    author: "Sjoerd",
+  });
+  rootHash.set(nextSha);
+  sessionStorage.start = nextSha;
+});
 
 autorun(function mainLoop() {
   render(template(getState()), document.getElementById("approot")!);
