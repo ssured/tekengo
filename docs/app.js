@@ -7598,27 +7598,28 @@ const rootHash = observable.box(
 
 
 
+
 const template = computedFn((state) => {
   const { today, _ } = state;
   const { x = 0, y = 0 } = state;
   // console.log({ today, p: (today as any)?.[PATH] });
 
   return $`
-    <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
-    <pre>paths: ${today && JSON.stringify((today )[PATH])}</pre>
-    <h1>${_optionalChain([today, 'optionalAccess', _2 => _2.year])} ${_optionalChain([today, 'optionalAccess', _3 => _3._, 'access', _4 => _4.year])} ${x},${y}</h1>
+    <h3>Prev: ${_optionalChain([state, 'access', _2 => _2.prev, 'optionalAccess', _3 => _3.today, 'optionalAccess', _4 => _4.year])}</h3>
+
+    <h1>${_optionalChain([today, 'optionalAccess', _5 => _5.year])} ${_optionalChain([today, 'optionalAccess', _6 => _6._, 'access', _7 => _7.year])} ${x},${state._.x}</h1>
+
     <input
       type="number"
-      value=${"" + _optionalChain([today, 'optionalAccess', _5 => _5.year])}
+      value=${"" + _optionalChain([today, 'optionalAccess', _8 => _8.year])}
       @change=${(e) =>
         today
           ? (today._.year = e.target.valueAsNumber)
           : console.log("no today")}
     />
+
     <button @click=${() => state._.x++}>${x}</button>
-    <pre>${JSON.stringify(state, null, 2)}</pre>
-    <pre>${JSON.stringify(state.__, null, 2)}</pre>
-    <pre>${JSON.stringify(encodeValue(state.__), null, 2)}</pre>
+
     <button
       @click=${() => state.__ && updateState(state.__)}
       ?disabled=${!state.__}
@@ -7629,16 +7630,20 @@ const template = computedFn((state) => {
 });
 
 const getState = () => open(rootHash.get());
-
-const updateState = action((nextValue) => {
-  const nextSha = loadJSON({
-    ...nextValue,
-    prev: rootHash.get(),
-    date: new Date().toISOString(),
-    author: "Sjoerd",
-  });
+const setState = (nextSha) => {
   rootHash.set(nextSha);
   sessionStorage.start = nextSha;
+};
+
+const updateState = action((nextValue) => {
+  setState(
+    loadJSON({
+      ...nextValue,
+      prev: getState(),
+      date: new Date().toISOString(),
+      author: "Sjoerd",
+    })
+  );
 });
 
 autorun(function mainLoop() {

@@ -76,6 +76,7 @@ const rootHash = observable.box(
 );
 
 type rootState = {
+  prev?: rootState;
   today: { year: number; month: number; day: number };
   x: number;
   y: number;
@@ -87,9 +88,10 @@ const template = computedFn((state: ReturnType<typeof getState>) => {
   // console.log({ today, p: (today as any)?.[PATH] });
 
   return html`
-    <pre>state: ${typeof state} ${JSON.stringify({ ...state })}</pre>
-    <pre>paths: ${today && JSON.stringify((today as any)[PATH])}</pre>
-    <h1>${today?.year} ${today?._.year} ${x},${y}</h1>
+    <h3>Prev: ${state.prev?.today?.year}</h3>
+
+    <h1>${today?.year} ${today?._.year} ${x},${state._.x}</h1>
+
     <input
       type="number"
       value=${"" + today?.year}
@@ -98,10 +100,9 @@ const template = computedFn((state: ReturnType<typeof getState>) => {
           ? (today._.year = e.target.valueAsNumber)
           : console.log("no today")}
     />
+
     <button @click=${() => state._.x++}>${x}</button>
-    <pre>${JSON.stringify(state, null, 2)}</pre>
-    <pre>${JSON.stringify(state.__, null, 2)}</pre>
-    <pre>${JSON.stringify(encodeValue(state.__), null, 2)}</pre>
+
     <button
       @click=${() => state.__ && updateState(state.__)}
       ?disabled=${!state.__}
@@ -112,16 +113,20 @@ const template = computedFn((state: ReturnType<typeof getState>) => {
 });
 
 const getState = () => open<rootState>(rootHash.get());
-
-const updateState = action((nextValue: rootState) => {
-  const nextSha = loadJSON({
-    ...nextValue,
-    prev: rootHash.get(),
-    date: new Date().toISOString(),
-    author: "Sjoerd",
-  });
+const setState = (nextSha: string) => {
   rootHash.set(nextSha);
   sessionStorage.start = nextSha;
+};
+
+const updateState = action((nextValue: rootState) => {
+  setState(
+    loadJSON({
+      ...nextValue,
+      prev: getState(),
+      date: new Date().toISOString(),
+      author: "Sjoerd",
+    })
+  );
 });
 
 autorun(function mainLoop() {
