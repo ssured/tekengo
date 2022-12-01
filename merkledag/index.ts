@@ -3,6 +3,7 @@ import { computedFn } from "mobx-utils";
 import { dlv, dset } from "../utils/dlvdset";
 import { sha256 } from "../utils/sha256";
 import type { DeepReadonly, DeepWritable } from "ts-essentials";
+import { string } from "zod";
 
 type JSONPrimitive = null | string | number | boolean;
 type JSONObject = { [k: string]: JSONValue };
@@ -81,7 +82,6 @@ const encodeObject = (
   );
 
 const HASH = Symbol();
-const SINGLETON = Symbol();
 const hashOfSingleton = (obj: unknown): string | null =>
   (typeof obj === "object" && obj && (obj as any)[HASH]) || null;
 
@@ -129,20 +129,24 @@ const getSingleton = computedFn((hash: EncodedJSONObjectRef[""]) => {
   const singleton: JSONObject = new Proxy(source, {
     get(source, p) {
       if (p === HASH) return hash;
-      if (p === SINGLETON) return singleton;
       atom.reportObserved();
       return decodeValue(Reflect.get(source, p));
+    },
+    ownKeys(source) {
+      atom.reportObserved();
+      return Reflect.ownKeys(source);
     },
   });
   return singleton;
 });
 
-const decodeValue = computedFn((e: EncodedJSON): JSONValue => {
+const decodeValue = (e: EncodedJSON): JSONValue => {
+  // console.log("decodeValue", e);
   if (typeof e !== "object" || e == null) return e;
   if (Array.isArray(e)) return e.map(decodeValue);
   if (isRef(e)) return getSingleton(e[""]);
   throw new Error("decode invalid object");
-});
+};
 
 export const PATH = Symbol();
 
@@ -151,13 +155,12 @@ export const PATH = Symbol();
 
 type singletonNode<T extends JSONObject> = DeepReadonly<T> & {
   [HASH]: string;
-  // [SINGLETON]: singletonNode<T>;
 };
 type deepWritableNode<T extends JSONObject> = T;
 type deepNode<T extends JSONObject> = {
   readonly [K in keyof T]?: T[K] extends JSONObject ? deepNode<T[K]> : T[K];
 } & {
-  readonly _: DeepWritable<T>;
+  readonly _: DeepWritable<Partial<T>>;
   [PATH]: string[];
 };
 type rootNode<T extends JSONObject> = deepNode<T> & {
@@ -165,16 +168,17 @@ type rootNode<T extends JSONObject> = deepNode<T> & {
 };
 
 const openRoot = computedFn(
-  <T extends JSONObject>(rootHash: EncodedJSONObjectRef[""]): rootNode<T> => {
+  <T extends JSONObject>(
+    rootHash: EncodedJSONObjectRef[""],
+    mutable: boolean,
+    pathstr: string
+  ): rootNode<T> => {
     const source = getSingleton(rootHash);
+    const sourcePath = JSON.stringify(pathstr);
     const stage = observable.box<EncodedJSONObject | T | undefined>(undefined);
 
     const node = computedFn(
-      (
-        singleton: JSONObject,
-        pathStr: string,
-        mutable: boolean
-      ): deepNode<JSONObject> => {
+      (singleton: JSONObject, pathStr: string): deepNode<JSONObject> => {
         const path = JSON.parse(pathStr); // path from root
         return new Proxy(singleton, {
           get(singleton, p) {
@@ -182,15 +186,31 @@ const openRoot = computedFn(
               if (p === PATH) return path;
               return Reflect.get(singleton, p);
             }
-            if (p === "_") return node(singleton, pathStr, true);
 
             const subpath = path.concat(p);
+
+            if (p === "_") {
+              /**
+               * Het idee is hier om cheap branches aan te bieden
+               * met een obj._ krijg je een mutable ref terug, die de wijzigingen
+               * opslaat in de obj._.__ property
+               * Deze wijzigingen kunnen later opgeslagen worden
+               */
+              const hash = hashOfSingleton(singleton);
+              // console.error({ singleton, hash });
+              if (!hash) throw new Error("should have a hash?");
+              return openRoot(
+                hash,
+                !mutable,
+                JSON.stringify(sourcePath.concat(subpath))
+              );
+            }
 
             const own = Reflect.get(singleton, p);
             const result = (mutable && dlv(stage.get() || {}, subpath)) || own;
 
             if (hashOfSingleton(result)) {
-              return node(result, JSON.stringify(subpath), mutable);
+              return node(result, JSON.stringify(subpath));
             }
 
             return result;
@@ -222,7 +242,11 @@ const openRoot = computedFn(
                 (changes as any)[p] = v;
               }
 
+              /**
+               * Deze change wordt
+               */
               stage.set(changes);
+              console.log("update)");
             });
             return true;
           },
@@ -230,113 +254,20 @@ const openRoot = computedFn(
       }
     );
 
-    const root = new Proxy(node(source, JSON.stringify([]), false), {
+    const root = new Proxy(node(source, JSON.stringify([])), {
       get(source, p) {
         if (p === "__") return stage.get(); //{ ...encodeObject(source), ...changes };
         return Reflect.get(source, p);
       },
-    }) as rootNode<T>;
+    }) as any;
 
     return root;
   }
 );
 
-// const decodeRef = computedFn((hash: EncodedJSONObjectRef[0]): JSONObject => {
-//   const { source, onUnobserved } = getSingleton(hash);
-
-//   let onNext: ((nextValue: JSONObject) => void) | undefined = undefined;
-
-//   // nodes which point to this node with the exact properties
-//   const referencedBy = new Map<refProxy, Set<string>>();
-//   onUnobserved.add(() => referencedBy.clear());
-
-//   // nodes this node points to
-//   const references = new Set<refProxy>();
-//   onUnobserved.add(() => {
-//     // cleanup inverse references
-//     for (const reference of references) reference[REGISTER_INVERSE](node);
-//     references.clear();
-//   });
-
-//   // Keep administration of nodes pointing to me
-//   const registerInverse = (parent: refProxy, key?: string) => {
-//     if (typeof key === "string") {
-//       // register
-//       if (!referencedBy.has(parent)) referencedBy.set(parent, new Set());
-//       referencedBy.get(parent)!.add(key);
-//     } else {
-//       // unregister
-//       referencedBy.delete(parent);
-//     }
-//   };
-
-//   // Tells all known paths to this node
-//   const paths = () => {
-//     // return [[hash]];
-//     const paths = Array.from(referencedBy.entries()).flatMap(([parent, keys]) =>
-//       parent[PATHS].flatMap((path) =>
-//         Array.from(keys).map((key) => path.concat(key))
-//       )
-//     );
-//     return paths.length === 0 ? [[hash]] : paths;
-//   };
-
-//   const setOnNext = (handler: (value: JSONObject) => void) => {
-//     onNext = handler;
-//   };
-
-//   let changes: Record<string, any> = {};
-
-//   const node = new Proxy(source, {
-//     get(source, k) {
-//       if (typeof k === "symbol") {
-//         if (k === HASH) return hash;
-//         if (k === IS_PROXY) return true;
-//         if (k === REGISTER_INVERSE) return registerInverse;
-//         if (k === PATHS) return paths();
-//         if (k === ON_NEXT) return setOnNext;
-//         return Reflect.get(source, k);
-//       }
-
-//       const result = decodeValue(Reflect.get(source, k));
-
-//       if (isProxy(result) && typeof k === "string") {
-//         references.add(result);
-//         result[REGISTER_INVERSE](node, k);
-//       }
-
-//       return result;
-//     },
-//     set(source, k, v) {
-//       if (typeof k === "symbol") return false;
-
-//       console.log("set", source, k, v);
-//       changes[k] = v;
-//       const nextNode = { ...node, ...changes };
-
-//       if (onNext) {
-//         onNext(nextNode);
-//         return true;
-//       }
-
-//       let didPropagate = false;
-
-//       for (const [reference, keys] of referencedBy) {
-//         for (const key of keys) {
-//           reference[key] = nextNode;
-//           didPropagate = true;
-//         }
-//       }
-
-//       return didPropagate;
-//     },
-//   }) as refProxy;
-
-//   return node;
-// });
-
+// const decodeRef
 export const open = computedFn(<T extends JSONObject>(hash: string) => {
-  const value = openRoot<T>(hash);
+  const value = openRoot<T>(hash, false, JSON.stringify([hash]));
   // value[ON_NEXT](onNext);
   return value;
 });

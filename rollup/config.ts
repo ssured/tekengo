@@ -51,86 +51,89 @@ const config: RollupOptions = {
           `Server listening at ${protocol}://${host}:${address.port}/`
         );
 
-        const db = new Db();
-
-        const wss = new WebSocketServer({
-          port: 8788,
-        });
-
-        const sockets = new Set<WebSocket>();
-
-        wss.on("connection", (socket) => {
-          sockets.add(socket);
-          socket.on("close", () => sockets.delete(socket));
-
-          socket.on(
-            "close",
-            observe(knownObjects, (change) => {
-              if (change.type === "add") {
-                console.log("send to browser", change.name, change.newValue);
-                socket.send(change.newValue);
-              }
-            })
-          );
-
-          socket.on("message", (e) => {
-            const source = e.toString("utf8");
-            console.log(">>>", source);
-            const hashOrObject = JSON.parse(source);
-
-            if (
-              typeof hashOrObject === "object" &&
-              hashOrObject &&
-              !Array.isArray(hashOrObject)
-            ) {
-              const sha = sha256(source);
-              if (!(sha in knownObjects)) {
-                loadJSON(source);
-                db.persist(sha, hashOrObject);
-                console.log("stored", sha, source);
-              }
-              return;
-            }
-
-            if (typeof hashOrObject !== "string") {
-              console.log("not a string", hashOrObject);
-              return;
-            }
-
-            if (hashOrObject in knownObjects) {
-              console.log(
-                "send known to browser",
-                hashOrObject,
-                knownObjects[hashOrObject]
-              );
-              socket.send(knownObjects[hashOrObject]);
-              return;
-            }
-
-            try {
-              const result = db.read(hashOrObject);
-              if (result) {
-                // const encoded = JSON.stringify(result);
-                // loadJSON(result);
-                // decodeObject(encoded);
-                // console.log({ wss: hash, result });
-                console.log(
-                  "send from db to browser",
-                  hashOrObject,
-                  stableStringify(result)
-                );
-                socket.send(stableStringify(result));
-              } else {
-                console.log("hash not found", hashOrObject);
-              }
-            } catch (e) {
-              console.error("db read failed", e);
-            }
-          });
-        });
+        startMerkleDAGServer();
       },
     }),
   ],
 };
 
 export default config;
+function startMerkleDAGServer() {
+  const db = new Db();
+
+  const wss = new WebSocketServer({
+    port: 8788,
+  });
+
+  const sockets = new Set<WebSocket>();
+
+  wss.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+
+    socket.on(
+      "close",
+      observe(knownObjects, (change) => {
+        if (change.type === "add") {
+          console.log("send to browser", change.name, change.newValue);
+          socket.send(change.newValue);
+        }
+      })
+    );
+
+    socket.on("message", (e) => {
+      const source = e.toString("utf8");
+      console.log(">>>", source);
+      const hashOrObject = JSON.parse(source);
+
+      if (
+        typeof hashOrObject === "object" &&
+        hashOrObject &&
+        !Array.isArray(hashOrObject)
+      ) {
+        const sha = sha256(source);
+        if (!(sha in knownObjects)) {
+          loadJSON(source);
+          db.persist(sha, hashOrObject);
+          console.log("stored", sha, source);
+        }
+        return;
+      }
+
+      if (typeof hashOrObject !== "string") {
+        console.log("not a string", hashOrObject);
+        return;
+      }
+
+      if (hashOrObject in knownObjects) {
+        console.log(
+          "send known to browser",
+          hashOrObject,
+          knownObjects[hashOrObject]
+        );
+        socket.send(knownObjects[hashOrObject]);
+        return;
+      }
+
+      try {
+        const result = db.read(hashOrObject);
+        if (result) {
+          // const encoded = JSON.stringify(result);
+          // loadJSON(result);
+          // decodeObject(encoded);
+          // console.log({ wss: hash, result });
+          console.log(
+            "send from db to browser",
+            hashOrObject,
+            stableStringify(result)
+          );
+          socket.send(stableStringify(result));
+        } else {
+          console.log("hash not found", hashOrObject);
+        }
+      } catch (e) {
+        console.error("db read failed", e);
+      }
+    });
+  });
+}
